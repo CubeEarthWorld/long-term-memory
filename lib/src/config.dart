@@ -40,13 +40,18 @@ class EngramConfig {
     this.hardMemoryRows = 16384,
     this.decayExpCap = 65536.0,
     this.compactEvery = 20,
+    this.maxQueryChunks = 16,
   })  : assert(dim1 >= dim2 && dim2 >= dim3, 'MRL dims must be descending'),
         assert(cap1 + cap2 + cap3 <= hardMemoryRows,
             'tier capacities exceed hardMemoryRows'),
         assert(
             thetaSame > thetaConflict, 'theta_same must exceed theta_conflict'),
         assert(thetaUp > thetaDown,
-            'promotion/demotion hysteresis requires θ_up > θ_down');
+            'promotion/demotion hysteresis requires θ_up > θ_down'),
+        // scoreThresholds must be non-empty, but list contents can't be
+        // asserted in a const constructor — validated in EngramMemory.initialize.
+        assert(budgetChars > 0, 'budgetChars must be positive'),
+        assert(maxQueryChunks > 0, 'maxQueryChunks must be positive');
 
   static const double _day = 24 * 60 * 60;
   static const double _year = 365 * _day;
@@ -108,6 +113,11 @@ class EngramConfig {
 
   /// Character budget of the injected memory pack.
   final int budgetChars;
+
+  /// Maximum query chunks embedded per [retrieve] call. A long utterance is
+  /// split into paragraphs/lines/sentences; only the first this-many are
+  /// embedded (a performance guard against pathologically long queries).
+  final int maxQueryChunks;
 
   // -- Identity thresholds (document–document cosine, §4.3) -- //
 
@@ -238,6 +248,7 @@ class EngramConfig {
     int? hardMemoryRows,
     double? decayExpCap,
     int? compactEvery,
+    int? maxQueryChunks,
   }) {
     return EngramConfig(
       cap1: cap1 ?? this.cap1,
@@ -277,6 +288,7 @@ class EngramConfig {
       hardMemoryRows: hardMemoryRows ?? this.hardMemoryRows,
       decayExpCap: decayExpCap ?? this.decayExpCap,
       compactEvery: compactEvery ?? this.compactEvery,
+      maxQueryChunks: maxQueryChunks ?? this.maxQueryChunks,
     );
   }
 
@@ -319,6 +331,7 @@ class EngramConfig {
         'hardMemoryRows': hardMemoryRows,
         'decayExpCap': decayExpCap,
         'compactEvery': compactEvery,
+        'maxQueryChunks': maxQueryChunks,
       };
 
   /// Lenient inverse of [toJson]: missing or mistyped values fall back to
@@ -335,11 +348,14 @@ class EngramConfig {
           final String v => double.tryParse(v) ?? def,
           _ => def,
         };
-    List<double> list(String k, List<double> def) => switch (json[k]) {
-          final List<Object?> v =>
-            v.whereType<num>().map((e) => e.toDouble()).toList(),
-          _ => def,
-        };
+    List<double> list(String k, List<double> def) {
+      final raw = json[k];
+      if (raw is List) {
+        final parsed = raw.whereType<num>().map((e) => e.toDouble()).toList();
+        if (parsed.isNotEmpty) return parsed; // empty/garbage → defaults
+      }
+      return def;
+    }
     return EngramConfig(
       cap1: i('cap1', d.cap1),
       cap2: i('cap2', d.cap2),
@@ -378,6 +394,7 @@ class EngramConfig {
       hardMemoryRows: i('hardMemoryRows', d.hardMemoryRows),
       decayExpCap: f('decayExpCap', d.decayExpCap),
       compactEvery: i('compactEvery', d.compactEvery),
+      maxQueryChunks: i('maxQueryChunks', d.maxQueryChunks),
     );
   }
 }

@@ -44,14 +44,16 @@ void main() {
     expect(cosine(v, back), greaterThan(0.99));
   });
 
-  test('cohesion is 1.0 for singletons and high for near-identical vectors',
-      () {
-    final v = l2Normalized(_randomVec(128, 5));
-    expect(cohesion([v]), 1.0);
-    expect(cohesion([v, v, v]), closeTo(1.0, 1e-5));
-    final w = l2Normalized(_randomVec(128, 6));
-    expect(cohesion([v, w]), lessThan(0.5));
-  });
+  test(
+    'cohesion is 1.0 for singletons and high for near-identical vectors',
+    () {
+      final v = l2Normalized(_randomVec(128, 5));
+      expect(cohesion([v]), 1.0);
+      expect(cohesion([v, v, v]), closeTo(1.0, 1e-5));
+      final w = l2Normalized(_randomVec(128, 6));
+      expect(cohesion([v, w]), lessThan(0.5));
+    },
+  );
 
   test('sphericalKMeans is deterministic and separates distinct groups', () {
     final a = l2Normalized(_randomVec(64, 10));
@@ -79,5 +81,98 @@ void main() {
     expect(labels1.sublist(0, 3).toSet().length, 1);
     expect(labels1.sublist(3).toSet().length, 1);
     expect(labels1[0], isNot(labels1[3]));
+  });
+
+  group('sphericalKMeans edge cases', () {
+    test('empty rows returns empty list', () {
+      expect(sphericalKMeans([], 3), isEmpty);
+    });
+
+    test('k=1 assigns all to cluster 0', () {
+      final rows = [
+        l2Normalized(_randomVec(16, 1)),
+        l2Normalized(_randomVec(16, 2)),
+        l2Normalized(_randomVec(16, 3)),
+      ];
+      final labels = sphericalKMeans(rows, 1);
+      expect(labels.every((l) => l == 0), isTrue);
+    });
+
+    test('k >= n assigns each row its own cluster', () {
+      final rows = [
+        l2Normalized(_randomVec(16, 1)),
+        l2Normalized(_randomVec(16, 2)),
+      ];
+      final labels = sphericalKMeans(rows, 10);
+      expect(labels.toSet().length, 2);
+    });
+  });
+
+  group('cohesion edge cases', () {
+    test('two identical vectors have cohesion 1.0', () {
+      final v = l2Normalized(Float32List.fromList([1.0, 2.0, 3.0, 4.0]));
+      expect(cohesion([v, v]), closeTo(1.0, 1e-6));
+    });
+
+    test('two orthogonal vectors have cohesion near 0', () {
+      final a = l2Normalized(Float32List.fromList([1.0, 0.0]));
+      final b = l2Normalized(Float32List.fromList([0.0, 1.0]));
+      expect(cohesion([a, b]), closeTo(0.0, 1e-6));
+    });
+
+    test('larger set of vectors computes correctly', () {
+      final vectors = List.generate(
+        10,
+        (i) => l2Normalized(_randomVec(32, i * 7)),
+      );
+      final c = cohesion(vectors);
+      expect(c, greaterThan(0.0));
+      expect(c, lessThanOrEqualTo(1.0));
+    });
+  });
+
+  group('dot product edge cases', () {
+    test('dot with different length vectors uses shorter', () {
+      final a = Float32List.fromList([1.0, 0.0, 0.0]);
+      final b = Float32List.fromList([1.0, 0.0]);
+      expect(dot(a, b), closeTo(1.0, 1e-9));
+    });
+
+    test('dot with empty vectors returns 0', () {
+      expect(dot(Float32List(0), Float32List(0)), 0.0);
+    });
+  });
+
+  group('cosine edge cases', () {
+    test('cosine with zero vector returns 0', () {
+      final zero = Float32List(4);
+      final v = _randomVec(4, 1);
+      expect(cosine(zero, v), 0.0);
+      expect(cosine(v, zero), 0.0);
+    });
+
+    test('cosine with both zero vectors returns 0', () {
+      expect(cosine(Float32List(4), Float32List(4)), 0.0);
+    });
+  });
+
+  group('quantizeInt8 edge cases', () {
+    test('all-zero vector quantizes with scale 1.0', () {
+      final v = Float32List(16);
+      final q = quantizeInt8(v);
+      expect(q.scale, 1.0);
+      expect(q.bytes.every((b) => b == 0), isTrue);
+    });
+
+    test('uniform vector round-trips with high fidelity', () {
+      final v = Float32List(32);
+      final val = 1.0 / sqrt(32);
+      for (var i = 0; i < 32; i++) {
+        v[i] = val;
+      }
+      final q = quantizeInt8(v);
+      final back = l2Normalized(dequantizeInt8(q.bytes, q.scale));
+      expect(cosine(v, back), greaterThan(0.99));
+    });
   });
 }

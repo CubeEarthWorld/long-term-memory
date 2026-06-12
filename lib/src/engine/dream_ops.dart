@@ -173,9 +173,14 @@ mixin _DreamOps on _EngineBase, _WriteOps, _MaintenanceOps {
     final isMerge = decision.action != DreamAction.split;
     final gen = math.min(maxGen + (isMerge ? 1 : 0), config.genMax);
     final picks = proposals.take(config.dreamMaxMembers).toList();
+    // A consolidated memory is a freshly verbalised proposition: never let it
+    // be born deader than a brand-new write (mass 1.0). The decayed activation
+    // carry-over (sumA) is a bonus for hot clusters, not a floor — without this
+    // guard a fully-decayed cluster (sumA == 0) would merge into a mass-0,
+    // immediately-forgettable row, silently losing the gist.
     final perMass = isMerge
-        ? math.min(sumA, config.mMax)
-        : math.min(sumA / math.max(1, picks.length), config.mMax);
+        ? math.max(1.0, math.min(sumA, config.mMax))
+        : math.max(1.0, math.min(sumA / math.max(1, picks.length), config.mMax));
 
     // Pre-embed outside the transaction (the embedder is external/async).
     final texts = [

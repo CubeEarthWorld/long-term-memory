@@ -2,8 +2,6 @@
 
 LLMアプリケーション向けの**長期記憶エンジン**。純粋Dartで書かれており、Flutterアプリ（全プラットフォーム）やDartサーバー/CLIから利用できます。
 
-本リポジトリのENGRAM v1.1記憶システムの忠実な移植です。設計全体は次の4文に圧縮されます:
-
 > 生成は言語化の瞬間だけ。判断はすべて距離。忘却はすべて算術。破壊はすべて夢の中。
 
 **このパッケージにはアルゴリズムだけが含まれます。** LLM・Embeddingモデル・DBは含まれず、3つの小さなインターフェースを通じて外部から注入します。そのため [firebase_ai](https://pub.dev/packages/firebase_ai)、[llamadart](https://pub.dev/documentation/llamadart/latest/)、[sqlite3](https://pub.dev/documentation/sqlite3/latest/)、drift、Isar、Hive、RESTエンドポイント、オンデバイスONNXモデルなど、何とでも組み合わせられます。
@@ -33,8 +31,7 @@ pub.devへ公開するまでは、pathまたはgit依存で利用します:
 dependencies:
   long_term_memory:
     git:
-      url: https://github.com/CubeEarthWorld/llm-long-term-memory
-      path: long-term-memory
+      url: https://github.com/CubeEarthWorld/long-term-memory
 ```
 
 ## クイックスタート

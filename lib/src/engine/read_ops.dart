@@ -13,7 +13,7 @@ class _Candidate {
 mixin _ReadOps on _EngineBase {
   Future<RetrieveResult> _retrieve(String query, int now) async {
     await _sanitizeTimestamps(now);
-    final chunks = splitParagraphs(query).take(16).toList();
+    final chunks = splitParagraphs(query).take(config.maxQueryChunks).toList();
     if (chunks.isEmpty) return RetrieveResult.empty;
     final rawQ = await embedder.embedQueries(chunks);
     final qFull = [
@@ -115,7 +115,10 @@ mixin _ReadOps on _EngineBase {
     for (final it in ranked) {
       final row = it.row;
       final line = '[${row.createdAt} ${row.tz}] ${row.text}　《id:${row.id}》\n';
-      if (used + line.length > config.budgetChars) continue;
+      // Always pack the top-ranked match even if it alone exceeds the budget:
+      // budgetChars is a soft cap, and returning nothing for a clear hit (a
+      // single over-budget line) is worse than overshooting by one line.
+      if (lines.isNotEmpty && used + line.length > config.budgetChars) continue;
       lines.add(line);
       used += line.length;
       ids.add(row.id);

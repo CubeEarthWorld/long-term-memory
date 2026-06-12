@@ -2,8 +2,6 @@
 
 A portable, dependency-light **long-term memory engine for LLM applications**, written in pure Dart and usable from any Flutter app (all platforms) or Dart server/CLI.
 
-It is a faithful port of the ENGRAM v1.1 memory system in this repository. The whole design compresses to four sentences:
-
 > Generation only at the moment of verbalization. All judgement is distance.
 > All forgetting is arithmetic. All destruction happens inside the dream.
 
@@ -34,8 +32,7 @@ Until published on pub.dev, depend on it by path or git:
 dependencies:
   long_term_memory:
     git:
-      url: https://github.com/CubeEarthWorld/llm-long-term-memory
-      path: long-term-memory
+      url: https://github.com/CubeEarthWorld/long-term-memory
 ```
 
 ## Quick start

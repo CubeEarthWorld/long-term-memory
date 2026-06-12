@@ -73,6 +73,11 @@ class EngramMemory extends _EngineBase
               'config.dim1 (${config.dim1}). Use an embedding model with at '
               'least ${config.dim1} dimensions or lower dim1/dim2/dim3.');
         }
+        if (config.scoreThresholds.isEmpty) {
+          throw ArgumentError(
+              'config.scoreThresholds must list at least one threshold; an '
+              'empty list would silently drop every retrieval result.');
+        }
         await _installMeta();
       });
 
