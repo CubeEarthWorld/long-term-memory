@@ -1,5 +1,7 @@
 # long_term_memory
 
+このプロジェクトは [CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) をDartパッケージ化したものです。
+
 LLMアプリケーション向けの**長期記憶エンジン**。純粋Dartで書かれており、Flutterアプリ（全プラットフォーム）やDartサーバー/CLIから利用できます。
 
 > 生成は言語化の瞬間だけ。判断はすべて距離。忘却はすべて算術。破壊はすべて夢の中。

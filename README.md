@@ -2,6 +2,8 @@
 
 A portable, dependency-light **long-term memory engine for LLM applications**, written in pure Dart and usable from any Flutter app (all platforms) or Dart server/CLI.
 
+This project packages [CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) as a Dart package.
+
 > Generation only at the moment of verbalization. All judgement is distance.
 > All forgetting is arithmetic. All destruction happens inside the dream.
 
