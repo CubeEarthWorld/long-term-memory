@@ -1,4 +1,4 @@
-/// A portable long-term memory engine for LLM applications (ENGRAM v1.1).
+/// A portable long-term memory engine for LLM applications (ENGRAM v2).
 ///
 /// Bring your own LLM, embedding model and database — the package contains
 /// only the algorithm:
@@ -11,9 +11,8 @@
 /// );
 /// await memory.initialize();
 ///
-/// await memory.saveMemory('ユーザーは京都に住んでいる');
-/// final recall = await memory.retrieve('どこに住んでいる？');
-/// await memory.maintain();
+/// await memory.remember('ユーザーは京都に住んでいる');
+/// final recall = await memory.recall('どこに住んでいる？');
 /// await memory.dream(adjudicate: myLlmCallback);
 /// ```
 ///
@@ -24,47 +23,26 @@ export 'src/config.dart' show EngramConfig;
 export 'src/dream/adjudicator.dart'
     show
         DreamAdjudicator,
-        DreamClusterRequest,
         DreamDecision,
         DreamMember,
-        DreamProposal,
+        DreamRequest,
         relaxedJsonDecode;
 export 'src/dream/prompts.dart' show EngramLocale, EngramPrompts;
 export 'src/embedder.dart' show CallbackEmbedder, Embedder;
 export 'src/engine/engine.dart' show EngramMemory;
 export 'src/models.dart'
     show
-        ConflictRecord,
-        DeleteAction,
-        DeleteResult,
         DreamAction,
-        DreamLogRecord,
         DreamReport,
-        EngramStats,
-        MemoryRecord,
-        MemorySnapshot,
-        RecalledMemory,
-        RetrieveResult,
-        SaveAction,
-        SaveResult,
-        VecDtype,
-        VectorRecord;
+        Memory,
+        Recalled,
+        RecallResult,
+        RememberAction,
+        RememberResult;
 export 'src/store/in_memory_store.dart' show InMemoryStore;
-export 'src/store/memory_store.dart' show Liveness, MemoryStore, TierEntry;
-export 'src/text_utils.dart' show clusterFingerprint, shorten, splitParagraphs;
+export 'src/store/memory_store.dart' show MemoryStore;
+export 'src/text.dart' show cleanText, cues, shorten;
 export 'src/timezone.dart'
     show MemoryTimezone, formatLocal, formatUtcOffset, parseUtcOffset;
-export 'src/ulid.dart' show UlidGenerator, ulid;
-export 'src/vector_math.dart'
-    show
-        QuantizedVector,
-        cohesion,
-        cosine,
-        dequantizeInt8,
-        dot,
-        l2Normalized,
-        packF32,
-        quantizeInt8,
-        sphericalKMeans,
-        truncateNormalize,
-        unpackF32;
+export 'src/ulid.dart' show UlidGenerator;
+export 'src/vector_math.dart' show dot, l2Normalized, packF32, unpackF32;

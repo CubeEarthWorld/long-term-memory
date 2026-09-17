@@ -1,17 +1,14 @@
-/// Deterministic test doubles ported from the reference implementation's
-/// eval mocks: a token-overlap embedder (texts sharing words/CJK characters
-/// are similar; unrelated texts are near-orthogonal) and a virtual clock.
+/// Deterministic test doubles: a token-overlap embedder whose vectors are
+/// bit-for-bit reproducible in the Python reference tests (FNV-1a token
+/// seeds → splitmix64 streams), a virtual clock and canned adjudicators.
 library;
 
 import 'dart:convert';
-import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:crypto/crypto.dart';
 import 'package:long_term_memory/long_term_memory.dart';
 
-/// Virtual clock: lets scenarios accelerate time (activation decay,
-/// refractory spacing) at zero real cost.
+/// Virtual clock: lets scenarios accelerate time at zero real cost.
 class VirtualClock {
   VirtualClock([this.t = 1700000000]);
 
@@ -28,48 +25,56 @@ class VirtualClock {
 /// `cos ≈ shared / √(n1·n2)` for texts with overlapping token sets, and
 /// identical token multisets give identical vectors.
 class FakeEmbedder implements Embedder {
-  FakeEmbedder({this.dimension = 768});
+  FakeEmbedder({this.dimension = 64, this.modelId = 'fake/token-overlap'});
 
   @override
   final int dimension;
 
   @override
-  String get modelId => 'fake/token-overlap';
+  final String modelId;
 
-  final Map<String, Float32List> _cache = {};
+  final Map<String, Float64List> _cache = {};
 
   static List<String> tokens(String text) {
     final lower = text.toLowerCase();
-    final words =
-        RegExp(r'[a-z0-9]+').allMatches(lower).map((m) => m.group(0)!).toList();
-    final cjk = <String>[];
-    for (final rune in lower.runes) {
-      if ((rune >= 0x3040 && rune <= 0x9FFF) ||
-          (rune >= 0xFF66 && rune <= 0xFF9D)) {
-        cjk.add(String.fromCharCode(rune));
-      }
-    }
-    return [...words, ...cjk];
+    return [
+      ...RegExp(r'[a-z0-9]+').allMatches(lower).map((m) => m.group(0)!),
+      for (final rune in lower.runes)
+        if ((rune >= 0x3040 && rune <= 0x9FFF) ||
+            (rune >= 0xFF66 && rune <= 0xFF9D))
+          String.fromCharCode(rune),
+    ];
   }
 
-  Float32List _tokenVec(String tok) => _cache.putIfAbsent(tok, () {
-        final digest = md5.convert(utf8.encode(tok)).toString();
-        final seed = int.parse(digest.substring(0, 8), radix: 16);
-        final rng = Random(seed);
-        final v = Float32List(dimension);
+  static int _fnv1a(String s) {
+    var h = 0xcbf29ce484222325;
+    for (final b in utf8.encode(s)) {
+      h = (h ^ b) * 0x100000001b3;
+    }
+    return h;
+  }
+
+  static int _splitmix(int x) {
+    x = (x ^ (x >>> 30)) * 0xBF58476D1CE4E5B9;
+    x = (x ^ (x >>> 27)) * 0x94D049BB133111EB;
+    return x ^ (x >>> 31);
+  }
+
+  Float64List _tokenVec(String tok) => _cache.putIfAbsent(tok, () {
+        var state = _fnv1a(tok);
+        final v = Float64List(dimension);
         for (var i = 0; i < dimension; i++) {
-          v[i] = rng.nextDouble() * 2 - 1;
+          state += 0x9E3779B97F4A7C15;
+          v[i] = (_splitmix(state) >>> 11) / 9007199254740992.0 * 2 - 1;
         }
         return v;
       });
 
-  Float32List _embed(String text) {
+  Float32List embed(String text) {
     final toks = tokens(text);
-    final v = Float32List(dimension);
+    final v = Float64List(dimension);
     if (toks.isEmpty) {
-      for (var i = 0; i < dimension; i++) {
-        v[i] = 1.0;
-      }
+      v.fillRange(0, dimension, 1.0);
     } else {
       for (final t in toks) {
         final tv = _tokenVec(t);
@@ -83,26 +88,53 @@ class FakeEmbedder implements Embedder {
 
   @override
   Future<List<Float32List>> embedDocuments(List<String> texts) async =>
-      [for (final t in texts) _embed(t)];
+      [for (final t in texts) embed(t)];
 
   @override
   Future<List<Float32List>> embedQueries(List<String> texts) async =>
-      [for (final t in texts) _embed(t)];
+      [for (final t in texts) embed(t)];
 }
 
-/// Merge-to-gist adjudicator: joins all member texts into one memory.
-DreamDecision mergeToGist(DreamClusterRequest request) {
-  final gist = request.members.map((m) => m.text).join(' / ');
-  return DreamDecision(
-    action: DreamAction.merge,
-    memories: [
-      DreamProposal(
-          text: gist.length > 160 ? gist.substring(0, 160) : gist,
-          timezone: 'Asia/Tokyo'),
-    ],
+/// Embedder that always throws (simulates an unavailable model).
+class BrokenEmbedder implements Embedder {
+  @override
+  int get dimension => 64;
+  @override
+  String get modelId => 'fake/broken';
+  @override
+  Future<List<Float32List>> embedDocuments(List<String> texts) =>
+      throw StateError('embedder offline');
+  @override
+  Future<List<Float32List>> embedQueries(List<String> texts) =>
+      throw StateError('embedder offline');
+}
+
+/// Adjudicator that merges the cluster into one gist (texts joined).
+DreamDecision mergeToGist(DreamRequest request) =>
+    DreamDecision([request.members.map((m) => m.text).join(' / ')]);
+
+/// Adjudicator that always answers "keep".
+DreamDecision alwaysKeep(DreamRequest request) => const DreamDecision.keep();
+
+/// Builds an engine over an [InMemoryStore] with a [VirtualClock].
+Future<(EngramMemory, VirtualClock, InMemoryStore)> build({
+  EngramConfig config = const EngramConfig(),
+  Embedder? embedder,
+  InMemoryStore? store,
+}) async {
+  final clock = VirtualClock();
+  final s = store ?? InMemoryStore();
+  final memory = EngramMemory(
+    store: s,
+    embedder: embedder ?? FakeEmbedder(),
+    config: config,
+    clock: clock.call,
+    defaultTimezone: const MemoryTimezone('Asia/Tokyo', Duration(hours: 9)),
   );
+  await memory.initialize();
+  return (memory, clock, s);
 }
 
-/// Adjudicator that always answers "no change".
-DreamDecision alwaysNone(DreamClusterRequest request) =>
-    const DreamDecision.none();
+/// `n` distinct tokens with [prefix]; disjoint prefixes are near-orthogonal.
+String tokensOf(int n, [String prefix = 't']) =>
+    [for (var i = 0; i < n; i++) '$prefix$i'].join(' ');

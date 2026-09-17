@@ -16,10 +16,10 @@ class ToyEmbedder implements Embedder {
   String get modelId => 'toy/hash-v1';
 
   @override
-  int get dimension => 768;
+  int get dimension => 256;
 
   Float32List _embed(String text) {
-    final v = Float32List(dimension);
+    final v = Float64List(dimension);
     final tokens = <String>[
       ...RegExp(r'[a-z0-9]+').allMatches(text.toLowerCase()).map((m) => m[0]!),
       ...text.runes
@@ -54,27 +54,28 @@ Future<void> main() async {
   );
   await memory.initialize();
 
-  // -- WRITE: store self-contained propositions (e.g. from LLM tool calls).
-  print('--- save ---');
+  // -- REMEMBER: store self-contained propositions (e.g. from LLM tool calls).
+  print('--- remember ---');
   for (final fact in [
     'ユーザーは京都に住んでいる',
     'ユーザーは抹茶アイスクリームが好き',
     'ユーザーは毎週水曜にジムへ通っている',
   ]) {
-    final r = await memory.saveMemory(fact);
-    print('${r.action.name}: ${r.text} (id=${r.id})');
+    final r = await memory.remember(fact);
+    print('${r.action.name}: ${r.memory?.text} (id=${r.memory?.id})');
   }
 
-  // Explicit Unix time + timezone for a backdated import:
-  await memory.saveMemory(
+  // Explicit Unix time, timezone and salience for an important backdated fact:
+  await memory.remember(
     'ユーザーは2026-04-01にベルリンへ出張した',
+    salience: 3,
     nowUnix: 1774000000,
     timezone: const MemoryTimezone('Europe/Berlin', Duration(hours: 2)),
   );
 
-  // -- READ: retrieve relevant memories for the next LLM prompt.
-  print('\n--- retrieve ---');
-  final recall = await memory.retrieve('抹茶のスイーツでおすすめある？');
+  // -- RECALL: retrieve relevant memories for the next LLM prompt.
+  print('\n--- recall ---');
+  final recall = await memory.recall('抹茶のスイーツでおすすめある？');
   print(recall.packText.trimRight());
   print(
       '(scores: ${recall.recalled.map((m) => m.score.toStringAsFixed(3)).join(', ')})');
@@ -88,32 +89,26 @@ Future<void> main() async {
   print('\n--- prompt for your LLM (first 120 chars) ---');
   print(userMessage.substring(0, 120).replaceAll('\n', ' | '));
 
-  // -- MAINTAIN: cheap per-turn housekeeping (no LLM, no embedding).
-  await memory.maintain();
-
   // -- DREAM: offline consolidation through *your* LLM. Here a fake one.
-  // A few overlapping notes form a cluster the dream phase can merge:
-  await memory.saveMemory('ユーザーは月曜の朝にコーヒーを飲む習慣がある');
-  await memory.saveMemory('ユーザーは火曜の朝にコーヒーを飲む習慣がある');
-  await memory.saveMemory('ユーザーは週末の朝にコーヒーを飲む習慣がある');
+  // Overlapping notes are labile (they have neighbours) and form a cluster:
+  await memory.remember('ユーザーは月曜の朝にコーヒーを飲む習慣がある');
+  await memory.remember('ユーザーは火曜の朝にコーヒーを飲む習慣がある');
+  await memory.remember('ユーザーは週末の朝にコーヒーを飲む習慣がある');
 
   print('\n--- dream ---');
   final reports = await memory.dream(
     adjudicate: (request) async {
       // Real apps: send request.buildPrompt() to an LLM in JSON mode and
       // return DreamDecision.parseJson(rawResponse).
-      final gist = request.members.map((m) => m.text).join(' / ');
-      return DreamDecision(
-        action: DreamAction.merge,
-        memories: [DreamProposal(text: gist)],
-      );
+      return DreamDecision([request.members.map((m) => m.text).join(' / ')]);
     },
   );
   for (final r in reports) {
-    print('${r.action.name}: ${r.before.length} memories '
-        '-> ${r.after.length} (priority ${r.priority.toStringAsFixed(2)})');
+    print('${r.action.name}: ${r.before.length} memories -> ${r.after.length}');
   }
 
-  print('\n--- stats ---');
-  print(await memory.stats());
+  print('\n--- memories ---');
+  for (final m in await memory.memories()) {
+    print(m);
+  }
 }
