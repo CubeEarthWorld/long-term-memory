@@ -94,7 +94,7 @@ String formatLocal(int unixSeconds, String tzField) {
   final offset = parseUtcOffset(offText) ?? Duration.zero;
   final local = unixSeconds + offset.inSeconds;
   var days = local ~/ 86400;
-  var secondsOfDay = local % 86400;
+  var secondsOfDay = local - days * 86400;
   if (secondsOfDay < 0) {
     secondsOfDay += 86400;
     days -= 1;

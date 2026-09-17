@@ -1,337 +1,182 @@
-/// ENGRAM v1.1 parameters (spec §8). All defaults match the reference
-/// implementation; tune only with a record of why.
+/// ENGRAM v2 parameters (SPEC §6). Defaults are the reference values; tune
+/// only with a record of why.
 class EngramConfig {
   /// Creates a configuration. Every parameter has the spec default.
   const EngramConfig({
-    this.cap1 = 1000,
-    this.cap2 = 3000,
-    this.cap3 = 6000,
-    this.dim1 = 768,
-    this.dim2 = 256,
-    this.dim3 = 128,
-    this.tau1 = 7 * _day,
-    this.tau2 = 90 * _day,
-    this.tau3 = 3 * _year,
-    this.mMax = 64.0,
-    this.refractorySeconds = 3600,
+    this.capacity = 10000,
+    this.initialStability = _day,
+    this.spacingGain = 3.0,
+    this.maxStability = 10 * _year,
+    this.gracePeriod = 3 * _day,
+    this.cosineFloor = 0.0,
     this.alpha = 0.35,
     this.injectN = 5,
     this.mmrLambda = 0.3,
-    this.scoreThresholds = const [0.1, 0.2],
+    this.minScore = 0.1,
+    this.relativeScore = 0.6,
     this.budgetChars = 1024,
-    this.thetaSame = 0.97,
-    this.thetaConflict = 0.85,
-    this.preciseMargin = 0.03,
-    this.thetaUp = 16.0,
-    this.thetaDown = 4.0,
-    this.textMax = 170,
-    this.textHardMax = 1024,
-    this.genMax = 7,
+    this.maxCues = 8,
+    this.thetaRelated = 0.75,
     this.dreamBudget = 5,
-    this.dreamBudgetHard = 4096,
-    this.clusterMin = 3,
-    this.clusterCohesionMin = 0.5,
-    this.dreamMaxMembers = 64,
-    this.conflictCap = 256,
-    this.dreamLogCap = 512,
-    this.tombstoneSweepPct = 0.10,
-    this.tombstoneSweepAge = 7 * _day,
-    this.writeRatePerDay = 2000,
-    this.hardMemoryRows = 16384,
-    this.decayExpCap = 65536.0,
-    this.compactEvery = 20,
-    this.maxQueryChunks = 16,
-  })  : assert(dim1 >= dim2 && dim2 >= dim3, 'MRL dims must be descending'),
-        assert(cap1 + cap2 + cap3 <= hardMemoryRows,
-            'tier capacities exceed hardMemoryRows'),
-        assert(
-            thetaSame > thetaConflict, 'theta_same must exceed theta_conflict'),
-        assert(thetaUp > thetaDown,
-            'promotion/demotion hysteresis requires θ_up > θ_down'),
-        // scoreThresholds must be non-empty, but list contents can't be
-        // asserted in a const constructor — validated in EngramMemory.initialize.
-        assert(budgetChars > 0, 'budgetChars must be positive'),
-        assert(maxQueryChunks > 0, 'maxQueryChunks must be positive');
+    this.dreamMaxMembers = 8,
+    this.gistMinCosine = 0.5,
+    this.textMax = 170,
+    this.writesPerDay = 1000,
+  })  : assert(capacity > 0, 'capacity must be positive'),
+        assert(initialStability > 0 && initialStability <= maxStability,
+            '0 < initialStability <= maxStability'),
+        assert(spacingGain >= 0 && gracePeriod >= 0,
+            'spacingGain and gracePeriod must be non-negative'),
+        assert(alpha >= 0 && alpha <= 1, 'alpha must be in [0, 1]'),
+        assert(cosineFloor >= 0 && cosineFloor < 1,
+            'cosineFloor must be in [0, 1)'),
+        assert(relativeScore >= 0 && relativeScore <= 1,
+            'relativeScore must be in [0, 1]'),
+        assert(thetaRelated > 0 && thetaRelated < 1,
+            'thetaRelated must be in (0, 1)'),
+        assert(dreamMaxMembers >= 2, 'dreamMaxMembers must be at least 2'),
+        assert(gistMinCosine >= 0 && gistMinCosine <= 1,
+            'gistMinCosine must be in [0, 1]'),
+        assert(budgetChars > 0 && textMax > 0 && maxCues > 0 && injectN > 0,
+            'budgetChars, textMax, maxCues and injectN must be positive');
 
   static const double _day = 24 * 60 * 60;
   static const double _year = 365 * _day;
 
-  // -- Tier capacities (tombstones included, I4) and MRL vector format -- //
+  /// Maximum number of traces; the weakest is forgotten beyond this.
+  final int capacity;
 
-  /// L1 (episodic) capacity in rows.
-  final int cap1;
+  /// Stability (half-life of retrievability, seconds) of a new trace.
+  final double initialStability;
 
-  /// L2 (semantic) capacity in rows.
-  final int cap2;
+  /// Stability growth on recall: `S ← S·(1 + gain·(1−R))`.
+  final double spacingGain;
 
-  /// L3 (schema) capacity in rows.
-  final int cap3;
+  /// Upper bound of stability in seconds — guarantees no immortal memory.
+  final double maxStability;
 
-  /// L1 vector dimension (float32). Also the engine's "full" precision dim:
-  /// the embedder must produce at least this many dimensions.
-  final int dim1;
+  /// Traces younger than this (seconds) are not eviction candidates while
+  /// any older trace exists — the consolidation window in which a new
+  /// memory gets its chance to be recalled.
+  final double gracePeriod;
 
-  /// L2 vector dimension (int8, MRL truncation of the full vector).
-  final int dim2;
+  /// Baseline cosine of unrelated text under the embedding model (e.g. ≈0.4
+  /// for EmbeddingGemma, 0 for models centred at zero). Cosines are
+  /// rescaled to `(cos − floor) / (1 − floor)` before scoring so that
+  /// [minScore] and cue activation mean the same thing for every model.
+  final double cosineFloor;
 
-  /// L3 vector dimension (int8).
-  final int dim3;
-
-  // -- Activation half-lives in seconds (§4.1): L1=7d, L2=90d, L3=3y -- //
-
-  /// L1 half-life τ in seconds.
-  final double tau1;
-
-  /// L2 half-life τ in seconds.
-  final double tau2;
-
-  /// L3 half-life τ in seconds.
-  final double tau3;
-
-  /// Mass / activation upper bound (I1).
-  final double mMax;
-
-  /// Minimum interval between mass bonuses — the spacing-effect refractory
-  /// period (§4.1).
-  final double refractorySeconds;
-
-  // -- Retrieval score (§4.2) -- //
-
-  /// Activation floor in the retrieval score: dormant but relevant memories
-  /// still compete.
+  /// Retrievability floor in the score: dormant but relevant traces still
+  /// compete.
   final double alpha;
 
-  /// Number of memories injected per retrieve call.
+  /// Number of traces injected per recall.
   final int injectN;
 
   /// MMR diversity penalty λ.
   final double mmrLambda;
 
-  /// Progressive score thresholds, relaxed (strictest first) only when
-  /// nothing matches; if even the loosest matches nothing, inject nothing.
-  final List<double> scoreThresholds;
+  /// Absolute minimum score for injection (nothing is injected below it —
+  /// unrelated traces must not be spuriously strengthened).
+  final double minScore;
 
-  /// Character budget of the injected memory pack.
+  /// Relative cut: candidates below `relativeScore × best score` are dropped,
+  /// so a strong hit is not accompanied by a noisy tail.
+  final double relativeScore;
+
+  /// Character budget of the injected pack.
   final int budgetChars;
 
-  /// Maximum query chunks embedded per [retrieve] call. A long utterance is
-  /// split into paragraphs/lines/sentences; only the first this-many are
-  /// embedded (a performance guard against pathologically long queries).
-  final int maxQueryChunks;
+  /// Maximum query cues (lines / sentences) embedded per recall.
+  final int maxCues;
 
-  // -- Identity thresholds (document–document cosine, §4.3) -- //
-
-  /// cos ≥ this → same proposition: supersede the old row.
-  final double thetaSame;
-
-  /// cos in `[thetaConflict, thetaSame)` → conflict: keep both, queue for
-  /// dream adjudication.
-  final double thetaConflict;
-
-  /// On write, L2/L3 candidates within this margin of [thetaConflict] are
-  /// re-embedded at full precision before the verdict (§5.1).
-  final double preciseMargin;
-
-  // -- Tier movement hysteresis (§4.4) -- //
-
-  /// Activation ≥ this promotes L2/L3 rows to L1 during dream.
-  final double thetaUp;
-
-  /// Activation < this marks a row as a preferred demotion victim.
-  final double thetaDown;
-
-  // -- Text atomicity (§3.1, §8) -- //
-
-  /// Soft limit: maximum characters of one stored proposition (longer text
-  /// is shortened at a sentence boundary).
-  final int textMax;
-
-  /// Hard limit in UTF-8 bytes; longer writes are rejected (I14).
-  final int textHardMax;
-
-  /// Consolidation generation cap (I7).
-  final int genMax;
-
-  // -- Dream (§6, §8) -- //
+  /// Cosine at or above which traces are neighbours for dream clustering.
+  final double thetaRelated;
 
   /// Default LLM adjudications per `dream()` call.
   final int dreamBudget;
 
-  /// Absolute bound on the dream budget ("∞" per §8.1).
-  final int dreamBudgetHard;
-
-  /// Minimum members for an eligible cluster.
-  final int clusterMin;
-
-  /// Minimum mean pairwise cosine for cluster eligibility.
-  final double clusterCohesionMin;
-
-  /// Maximum members handed to the LLM per adjudication.
+  /// Maximum members per cluster (bounds the blast radius of one verdict).
   final int dreamMaxMembers;
 
-  // -- Ring buffers (I11) -- //
+  /// A replacement text must reach this cosine against at least one cluster
+  /// member; otherwise the whole verdict is treated as keep (confabulation /
+  /// injection guard).
+  final double gistMinCosine;
 
-  /// Conflict queue capacity (oldest dropped beyond this).
-  final int conflictCap;
+  /// Maximum characters of one stored proposition (longer text is shortened
+  /// at a sentence boundary).
+  final int textMax;
 
-  /// Dream log capacity.
-  final int dreamLogCap;
-
-  // -- Housekeeping (§6) -- //
-
-  /// Sweep a tier's tombstones when they exceed this fraction of the tier.
-  final double tombstoneSweepPct;
-
-  /// ...or when a tombstone is older than this many seconds.
-  final double tombstoneSweepAge;
-
-  /// Soft write-rate limit per rolling 24 h (§5.1).
-  final int writeRatePerDay;
-
-  // -- Safety hard bounds (§8.1, I14) -- //
-
-  /// Hard cap on total memory rows — also the loop guard for capacity
-  /// enforcement.
-  final int hardMemoryRows;
-
-  /// If `max(0,Δt)/τ` exceeds this, activation is exactly 0 (underflow guard).
-  final double decayExpCap;
-
-  /// Call `MemoryStore.compact()` every N `maintain()` calls.
-  final int compactEvery;
-
-  /// Half-life for [tier] (1-based).
-  double tauOf(int tier) => switch (tier) { 1 => tau1, 2 => tau2, _ => tau3 };
-
-  /// Vector dimension for [tier] (1-based).
-  int dimOf(int tier) => switch (tier) { 1 => dim1, 2 => dim2, _ => dim3 };
-
-  /// Capacity for [tier] (1-based).
-  int capOf(int tier) => switch (tier) { 1 => cap1, 2 => cap2, _ => cap3 };
+  /// Soft write-rate limit per rolling 24 h. Together with [gracePeriod] it
+  /// bounds how much of the store a write flood can displace.
+  final int writesPerDay;
 
   /// Returns a copy with the given fields replaced.
   EngramConfig copyWith({
-    int? cap1,
-    int? cap2,
-    int? cap3,
-    int? dim1,
-    int? dim2,
-    int? dim3,
-    double? tau1,
-    double? tau2,
-    double? tau3,
-    double? mMax,
-    double? refractorySeconds,
+    int? capacity,
+    double? initialStability,
+    double? spacingGain,
+    double? maxStability,
+    double? gracePeriod,
+    double? cosineFloor,
     double? alpha,
     int? injectN,
     double? mmrLambda,
-    List<double>? scoreThresholds,
+    double? minScore,
+    double? relativeScore,
     int? budgetChars,
-    double? thetaSame,
-    double? thetaConflict,
-    double? preciseMargin,
-    double? thetaUp,
-    double? thetaDown,
-    int? textMax,
-    int? textHardMax,
-    int? genMax,
+    int? maxCues,
+    double? thetaRelated,
     int? dreamBudget,
-    int? dreamBudgetHard,
-    int? clusterMin,
-    double? clusterCohesionMin,
     int? dreamMaxMembers,
-    int? conflictCap,
-    int? dreamLogCap,
-    double? tombstoneSweepPct,
-    double? tombstoneSweepAge,
-    int? writeRatePerDay,
-    int? hardMemoryRows,
-    double? decayExpCap,
-    int? compactEvery,
-    int? maxQueryChunks,
-  }) {
-    return EngramConfig(
-      cap1: cap1 ?? this.cap1,
-      cap2: cap2 ?? this.cap2,
-      cap3: cap3 ?? this.cap3,
-      dim1: dim1 ?? this.dim1,
-      dim2: dim2 ?? this.dim2,
-      dim3: dim3 ?? this.dim3,
-      tau1: tau1 ?? this.tau1,
-      tau2: tau2 ?? this.tau2,
-      tau3: tau3 ?? this.tau3,
-      mMax: mMax ?? this.mMax,
-      refractorySeconds: refractorySeconds ?? this.refractorySeconds,
-      alpha: alpha ?? this.alpha,
-      injectN: injectN ?? this.injectN,
-      mmrLambda: mmrLambda ?? this.mmrLambda,
-      scoreThresholds: scoreThresholds ?? this.scoreThresholds,
-      budgetChars: budgetChars ?? this.budgetChars,
-      thetaSame: thetaSame ?? this.thetaSame,
-      thetaConflict: thetaConflict ?? this.thetaConflict,
-      preciseMargin: preciseMargin ?? this.preciseMargin,
-      thetaUp: thetaUp ?? this.thetaUp,
-      thetaDown: thetaDown ?? this.thetaDown,
-      textMax: textMax ?? this.textMax,
-      textHardMax: textHardMax ?? this.textHardMax,
-      genMax: genMax ?? this.genMax,
-      dreamBudget: dreamBudget ?? this.dreamBudget,
-      dreamBudgetHard: dreamBudgetHard ?? this.dreamBudgetHard,
-      clusterMin: clusterMin ?? this.clusterMin,
-      clusterCohesionMin: clusterCohesionMin ?? this.clusterCohesionMin,
-      dreamMaxMembers: dreamMaxMembers ?? this.dreamMaxMembers,
-      conflictCap: conflictCap ?? this.conflictCap,
-      dreamLogCap: dreamLogCap ?? this.dreamLogCap,
-      tombstoneSweepPct: tombstoneSweepPct ?? this.tombstoneSweepPct,
-      tombstoneSweepAge: tombstoneSweepAge ?? this.tombstoneSweepAge,
-      writeRatePerDay: writeRatePerDay ?? this.writeRatePerDay,
-      hardMemoryRows: hardMemoryRows ?? this.hardMemoryRows,
-      decayExpCap: decayExpCap ?? this.decayExpCap,
-      compactEvery: compactEvery ?? this.compactEvery,
-      maxQueryChunks: maxQueryChunks ?? this.maxQueryChunks,
-    );
-  }
+    double? gistMinCosine,
+    int? textMax,
+    int? writesPerDay,
+  }) =>
+      EngramConfig(
+        capacity: capacity ?? this.capacity,
+        initialStability: initialStability ?? this.initialStability,
+        spacingGain: spacingGain ?? this.spacingGain,
+        maxStability: maxStability ?? this.maxStability,
+        gracePeriod: gracePeriod ?? this.gracePeriod,
+        cosineFloor: cosineFloor ?? this.cosineFloor,
+        alpha: alpha ?? this.alpha,
+        injectN: injectN ?? this.injectN,
+        mmrLambda: mmrLambda ?? this.mmrLambda,
+        minScore: minScore ?? this.minScore,
+        relativeScore: relativeScore ?? this.relativeScore,
+        budgetChars: budgetChars ?? this.budgetChars,
+        maxCues: maxCues ?? this.maxCues,
+        thetaRelated: thetaRelated ?? this.thetaRelated,
+        dreamBudget: dreamBudget ?? this.dreamBudget,
+        dreamMaxMembers: dreamMaxMembers ?? this.dreamMaxMembers,
+        gistMinCosine: gistMinCosine ?? this.gistMinCosine,
+        textMax: textMax ?? this.textMax,
+        writesPerDay: writesPerDay ?? this.writesPerDay,
+      );
 
   /// JSON form (for persisting / displaying the active configuration).
   Map<String, Object?> toJson() => {
-        'cap1': cap1,
-        'cap2': cap2,
-        'cap3': cap3,
-        'dim1': dim1,
-        'dim2': dim2,
-        'dim3': dim3,
-        'tau1': tau1,
-        'tau2': tau2,
-        'tau3': tau3,
-        'mMax': mMax,
-        'refractorySeconds': refractorySeconds,
+        'capacity': capacity,
+        'initialStability': initialStability,
+        'spacingGain': spacingGain,
+        'maxStability': maxStability,
+        'gracePeriod': gracePeriod,
+        'cosineFloor': cosineFloor,
         'alpha': alpha,
         'injectN': injectN,
         'mmrLambda': mmrLambda,
-        'scoreThresholds': scoreThresholds,
+        'minScore': minScore,
+        'relativeScore': relativeScore,
         'budgetChars': budgetChars,
-        'thetaSame': thetaSame,
-        'thetaConflict': thetaConflict,
-        'preciseMargin': preciseMargin,
-        'thetaUp': thetaUp,
-        'thetaDown': thetaDown,
-        'textMax': textMax,
-        'textHardMax': textHardMax,
-        'genMax': genMax,
+        'maxCues': maxCues,
+        'thetaRelated': thetaRelated,
         'dreamBudget': dreamBudget,
-        'dreamBudgetHard': dreamBudgetHard,
-        'clusterMin': clusterMin,
-        'clusterCohesionMin': clusterCohesionMin,
         'dreamMaxMembers': dreamMaxMembers,
-        'conflictCap': conflictCap,
-        'dreamLogCap': dreamLogCap,
-        'tombstoneSweepPct': tombstoneSweepPct,
-        'tombstoneSweepAge': tombstoneSweepAge,
-        'writeRatePerDay': writeRatePerDay,
-        'hardMemoryRows': hardMemoryRows,
-        'decayExpCap': decayExpCap,
-        'compactEvery': compactEvery,
-        'maxQueryChunks': maxQueryChunks,
+        'gistMinCosine': gistMinCosine,
+        'textMax': textMax,
+        'writesPerDay': writesPerDay,
       };
 
   /// Lenient inverse of [toJson]: missing or mistyped values fall back to
@@ -348,53 +193,26 @@ class EngramConfig {
           final String v => double.tryParse(v) ?? def,
           _ => def,
         };
-    List<double> list(String k, List<double> def) {
-      final raw = json[k];
-      if (raw is List) {
-        final parsed = raw.whereType<num>().map((e) => e.toDouble()).toList();
-        if (parsed.isNotEmpty) return parsed; // empty/garbage → defaults
-      }
-      return def;
-    }
     return EngramConfig(
-      cap1: i('cap1', d.cap1),
-      cap2: i('cap2', d.cap2),
-      cap3: i('cap3', d.cap3),
-      dim1: i('dim1', d.dim1),
-      dim2: i('dim2', d.dim2),
-      dim3: i('dim3', d.dim3),
-      tau1: f('tau1', d.tau1),
-      tau2: f('tau2', d.tau2),
-      tau3: f('tau3', d.tau3),
-      mMax: f('mMax', d.mMax),
-      refractorySeconds: f('refractorySeconds', d.refractorySeconds),
+      capacity: i('capacity', d.capacity),
+      initialStability: f('initialStability', d.initialStability),
+      spacingGain: f('spacingGain', d.spacingGain),
+      maxStability: f('maxStability', d.maxStability),
+      gracePeriod: f('gracePeriod', d.gracePeriod),
+      cosineFloor: f('cosineFloor', d.cosineFloor),
       alpha: f('alpha', d.alpha),
       injectN: i('injectN', d.injectN),
       mmrLambda: f('mmrLambda', d.mmrLambda),
-      scoreThresholds: list('scoreThresholds', d.scoreThresholds),
+      minScore: f('minScore', d.minScore),
+      relativeScore: f('relativeScore', d.relativeScore),
       budgetChars: i('budgetChars', d.budgetChars),
-      thetaSame: f('thetaSame', d.thetaSame),
-      thetaConflict: f('thetaConflict', d.thetaConflict),
-      preciseMargin: f('preciseMargin', d.preciseMargin),
-      thetaUp: f('thetaUp', d.thetaUp),
-      thetaDown: f('thetaDown', d.thetaDown),
-      textMax: i('textMax', d.textMax),
-      textHardMax: i('textHardMax', d.textHardMax),
-      genMax: i('genMax', d.genMax),
+      maxCues: i('maxCues', d.maxCues),
+      thetaRelated: f('thetaRelated', d.thetaRelated),
       dreamBudget: i('dreamBudget', d.dreamBudget),
-      dreamBudgetHard: i('dreamBudgetHard', d.dreamBudgetHard),
-      clusterMin: i('clusterMin', d.clusterMin),
-      clusterCohesionMin: f('clusterCohesionMin', d.clusterCohesionMin),
       dreamMaxMembers: i('dreamMaxMembers', d.dreamMaxMembers),
-      conflictCap: i('conflictCap', d.conflictCap),
-      dreamLogCap: i('dreamLogCap', d.dreamLogCap),
-      tombstoneSweepPct: f('tombstoneSweepPct', d.tombstoneSweepPct),
-      tombstoneSweepAge: f('tombstoneSweepAge', d.tombstoneSweepAge),
-      writeRatePerDay: i('writeRatePerDay', d.writeRatePerDay),
-      hardMemoryRows: i('hardMemoryRows', d.hardMemoryRows),
-      decayExpCap: f('decayExpCap', d.decayExpCap),
-      compactEvery: i('compactEvery', d.compactEvery),
-      maxQueryChunks: i('maxQueryChunks', d.maxQueryChunks),
+      gistMinCosine: f('gistMinCosine', d.gistMinCosine),
+      textMax: i('textMax', d.textMax),
+      writesPerDay: i('writesPerDay', d.writesPerDay),
     );
   }
 }

@@ -2,8 +2,8 @@
 
 ## `main.dart` — zero-dependency quick start
 
-Bundled `InMemoryStore` + a toy hash embedder; shows save → retrieve →
-prompt building → maintain → dream end to end.
+Bundled `InMemoryStore` + a toy hash embedder; shows remember → recall →
+prompt building → dream end to end.
 
 ```bash
 dart run example/main.dart
@@ -11,9 +11,9 @@ dart run example/main.dart
 
 ## `sqlite_adapter/` — production-style database adapter
 
-A complete `MemoryStore` over [`package:sqlite3`](https://pub.dev/packages/sqlite3)
-with WAL, real transactions for dream adjudications, a rotating snapshot
-ring (`backup()`) and checkpoint+vacuum (`compact()`).
+A complete `MemoryStore` over [`package:sqlite3`](https://pub.dev/packages/sqlite3):
+one table, WAL, a real transaction for dream replacements, and a rotating
+snapshot ring (`backup()`).
 
 ```bash
 cd example/sqlite_adapter
@@ -21,27 +21,21 @@ dart pub get
 dart test
 ```
 
-Use it from your app (copy the file, or depend on the folder):
-
 ```dart
 final store = SqliteMemoryStore('/path/to/memory.db');
 final memory = EngramMemory(store: store, embedder: myEmbedder);
 await memory.initialize();
 ```
 
-On Flutter, add [`sqlite3_flutter_libs`](https://pub.dev/packages/sqlite3_flutter_libs)
-to bundle the native library; the adapter code works unchanged. The same
-file is the recommended template for drift / Isar / Hive / ObjectBox
-adapters — implement the `MemoryStore` primitives, then override the bulk
-methods your backend can do in one statement.
+On Flutter, add [`sqlite3_flutter_libs`](https://pub.dev/packages/sqlite3_flutter_libs);
+the adapter works unchanged. The same six operations map directly onto drift /
+Isar / Hive / ObjectBox.
 
 ## Wiring real models
 
 ### firebase_ai (Gemini embeddings + Gemini dream LLM)
 
 ```dart
-import 'package:firebase_ai/firebase_ai.dart';
-
 final embeddingModel =
     FirebaseAI.googleAI().generativeModel(model: 'gemini-embedding-001');
 
@@ -51,22 +45,19 @@ final embedder = CallbackEmbedder(
   onEmbedDocuments: (texts) async {
     final res = await embeddingModel.batchEmbedContents([
       for (final t in texts)
-        EmbedContentRequest(Content.text(t),
-            taskType: TaskType.retrievalDocument),
+        EmbedContentRequest(Content.text(t), taskType: TaskType.retrievalDocument),
     ]);
     return [for (final e in res.embeddings) Float32List.fromList(e.values)];
   },
   onEmbedQueries: (texts) async {
     final res = await embeddingModel.batchEmbedContents([
       for (final t in texts)
-        EmbedContentRequest(Content.text(t),
-            taskType: TaskType.retrievalQuery),
+        EmbedContentRequest(Content.text(t), taskType: TaskType.retrievalQuery),
     ]);
     return [for (final e in res.embeddings) Float32List.fromList(e.values)];
   },
 );
 
-// Dream adjudication with a Gemini chat model in JSON mode:
 final chat = FirebaseAI.googleAI().generativeModel(
   model: 'gemini-3.5-flash',
   generationConfig: GenerationConfig(responseMimeType: 'application/json'),
@@ -77,25 +68,21 @@ await memory.dream(adjudicate: (request) async {
 });
 ```
 
-(API names follow the firebase_ai docs; check your installed version.)
-
-### llamadart (fully local: GGUF embedding + GGUF LLM)
+### llamadart (fully local: EmbeddingGemma GGUF + GGUF LLM)
 
 ```dart
-final embedLlama = Llama(modelPath: 'embeddinggemma-300m.gguf', embedding: true);
+final embedLlama = Llama(modelPath: 'embeddinggemma-300m-qat-Q4_0.gguf', embedding: true);
 final embedder = CallbackEmbedder(
   modelId: 'embeddinggemma-300m',
   dimension: 768,
-  // EmbeddingGemma's asymmetric prompts:
   onEmbedDocuments: (texts) async => [
-    for (final t in texts)
-      Float32List.fromList(await embedLlama.embed('title: none | text: $t')),
+    for (final t in texts) Float32List.fromList(await embedLlama.embed('title: none | text: $t')),
   ],
   onEmbedQueries: (texts) async => [
-    for (final t in texts)
-      Float32List.fromList(await embedLlama.embed('task: search result | query: $t')),
+    for (final t in texts) Float32List.fromList(await embedLlama.embed('task: search result | query: $t')),
   ],
 );
+// EmbeddingGemma: unrelated texts sit around cos ≈ 0.4 → EngramConfig(cosineFloor: 0.4)
 
 final chatLlama = Llama(modelPath: 'qwen2.5-3b-instruct.gguf');
 await memory.dream(adjudicate: (request) async {
@@ -107,7 +94,7 @@ await memory.dream(adjudicate: (request) async {
 ### Conversation loop (any tool-calling LLM)
 
 ```dart
-final pack = await memory.retrieve(userText);
+final pack = await memory.recall(userText);
 final response = await yourLlm.chat(
   system: EngramPrompts.conversationSystemPromptJa,
   user: EngramPrompts.buildUserMessage(
@@ -120,10 +107,11 @@ final response = await yourLlm.chat(
 for (final call in response.toolCalls) {
   switch (call.name) {
     case 'save_memory':
-      await memory.saveMemory(call.args['text'] as String);
+      await memory.remember(call.args['text'] as String,
+          salience: (call.args['salience'] as num?)?.toDouble() ?? 1);
     case 'delete_memory':
-      await memory.deleteMemory(call.args['id'] as String);
+      await memory.forget(call.args['id'] as String);
   }
 }
-await memory.maintain();
+await memory.cite(response.text);
 ```

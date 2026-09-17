@@ -1,34 +1,39 @@
 # long_term_memory
 
-A portable, dependency-light **long-term memory engine for LLM applications**, written in pure Dart and usable from any Flutter app (all platforms) or Dart server/CLI.
-
-This project packages [CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) as a Dart package.
+A portable, **zero-dependency** long-term memory engine for LLM applications, written in pure Dart and usable from any Flutter app (all platforms) or Dart server/CLI. It implements **ENGRAM v2** — a memory *trace* model derived from the principles of human memory — and is the Dart twin of [CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) (the specification lives there as `SPEC.md`; a cross-language conformance test keeps both implementations identical).
 
 > Generation only at the moment of verbalization. All judgement is distance.
-> All forgetting is arithmetic. All destruction happens inside the dream.
+> All forgetting is arithmetic. All consolidation happens inside the dream.
 
-**The package contains only the algorithm.** The LLM, the embedding model and the database are *not* included — you inject them through three small interfaces, so it composes with anything: [firebase_ai](https://pub.dev/packages/firebase_ai), [llamadart](https://pub.dev/documentation/llamadart/latest/), [sqlite3](https://pub.dev/documentation/sqlite3/latest/), drift, Isar, Hive, REST endpoints, on-device ONNX models, …
+**The package contains only the algorithm.** The LLM, the embedding model and the database are injected through three small interfaces, so it composes with anything: [firebase_ai](https://pub.dev/packages/firebase_ai), [llamadart](https://pub.dev/documentation/llamadart/latest/), [sqlite3](https://pub.dev/documentation/sqlite3/latest/), drift, Isar, Hive, REST endpoints, on-device ONNX models, …
 
 日本語版は [README.ja.md](README.ja.md) を参照してください。
 
 ---
 
-## Features
+## The model in one screen
 
-- **3-tier memory** — L1 episodic (768-d float32, half-life 7 days), L2 semantic (256-d int8, 90 days), L3 schema (128-d int8, 3 years). Tiers store Matryoshka (MRL) truncations of one embedding: lower tiers keep the same vector at lower resolution, no re-embedding needed.
-- **Activation decay** — every memory carries a mass; its activation `A = mass · 2^(−Δt/τ)` decays with the tier half-life. Recall reinforces mass (spacing effect with a 1-hour refractory gate). Forgetting is pure arithmetic.
-- **Distance-only identity** — writes are judged by document–document cosine: `≥ 0.97` supersedes the old memory, `0.85–0.97` keeps both and queues the conflict, below inserts a new row. No LLM in the write path.
-- **Relevance + recency retrieval** — score = `max(0, cos) · (α + (1−α)·Â)` with an activation floor so dormant-but-relevant memories still compete, plus MMR diversity selection and a character-budgeted, injection-safe memory pack.
-- **Dream-phase consolidation** — offline clustering (spherical k-means) + LLM adjudication (merge / split / none) through a callback you implement with *your* LLM; generation caps, confabulation guards, mass carry-over and one-transaction-per-adjudication are enforced by the engine.
-- **Tier movement & capacity** — automatic demotion (L1→L2→L3 via MRL truncation + int8 quantisation), promotion of hot memories back to L1 (re-embedding), tombstone sweeps, ring-buffered conflict/dream logs, hard row caps.
-- **Time & timezone aware** — every call accepts an explicit 64-bit Unix time and a timezone (`IANA name + offset`, stored as `'Asia/Tokyo;+09:00'`); the clock is injectable, clock rollbacks are sanitised, and local-time formatting needs no tz database.
-- **Bring-your-own everything** — `Embedder` (embedding model), `MemoryStore` (database) and `DreamAdjudicator` (LLM) interfaces; an `InMemoryStore` is bundled so the package works out of the box, and a complete SQLite adapter ships in [`example/sqlite_adapter`](example/sqlite_adapter).
-- **Prompt kit included** — Japanese + English system prompts, `save_memory` / `delete_memory` tool specs, extraction-fallback and dream-consolidation templates, and lenient JSON parsers (`DreamDecision.parseJson`, `EngramPrompts.parseExtractedTexts`).
-- Pure Dart, one runtime dependency (`package:crypto`), no codegen, fully deterministic test suite.
+A memory is a **trace** with two numbers — when it was last recalled and how stable it is (a half-life) — plus one flag (`consolidated`). No tiers, no counters, no rings, no maintenance call.
+
+```text
+R(now)   = 2^(−max(0, now − lastRecall) / stability)           retrievability ∈ [0,1]
+strength = stability · R                                       total remaining retrievability
+a        = max(0, (cos − cosineFloor) / (1 − cosineFloor))     cue activation
+recall   : stability ← min(stability · (1 + gain·a·(1−R)), S_max);  lastRecall ← now
+new      : stability = clamp(S0 · salience, 1 s, S_max)
+```
+
+| verb | what happens |
+|---|---|
+| `remember(text, salience:)` | exact duplicate → rehearsal; otherwise insert, **never overwrite**. A trace with a neighbour (cos ≥ θ_related) is born *labile* and reactivates that neighbour (reconsolidation). Over `capacity`, the lowest-strength trace outside the 3-day grace period is forgotten. |
+| `recall(query)` | multi-cue cosine → `score = a·(α + (1−α)·R)` → absolute + relative cut → MMR → `[unix tz] text 《id》` pack ≤ 1024 chars. Injection is exposure: half-activation strengthening. |
+| `cite(reply)` | the `《id》`s the LLM quoted are strengthened as *used* (full activation). |
+| `forget(id)` | id-only physical delete. |
+| `dream(adjudicate:)` | labile traces (most stable first) seed clusters of cos ≥ θ_related neighbours (≤ 8); your LLM answers **keep** or **replace [texts]**. Gists inherit the strongest member's stability plus the *live* evidence of the others; unrelated outputs are rejected as confabulation. A settled store makes no LLM calls. |
+
+Everything is bounded, so cost does not depend on elapsed time: a 3000-virtual-year simulation (hundreds of thousands of writes, decade-long silences, a clock fault) is part of the test suite.
 
 ## Installation
-
-Until published on pub.dev, depend on it by path or git:
 
 ```yaml
 dependencies:
@@ -50,73 +55,56 @@ Future<void> main() async {
   );
   await memory.initialize();
 
-  // WRITE — store one self-contained fact (e.g. from an LLM tool call).
-  final saved = await memory.saveMemory('ユーザーは京都に住んでいる');
-  print(saved.action); // SaveAction.inserted
+  // REMEMBER — store one self-contained fact (e.g. from an LLM tool call).
+  final saved = await memory.remember('ユーザーは京都に住んでいる', salience: 2);
+  print(saved.action); // RememberAction.inserted
 
-  // READ — fetch relevant memories for the next prompt.
-  final recall = await memory.retrieve('どこに住んでいるか覚えてる？');
+  // RECALL — fetch relevant memories for the next prompt.
+  final recall = await memory.recall('どこに住んでいるか覚えてる？');
   print(recall.packText); // [<unix> Asia/Tokyo;+09:00] ユーザーは京都に住んでいる　《id:...》
 
-  // Per-turn upkeep (no LLM, no embedding — cheap).
-  await memory.maintain();
+  // CITE — after the LLM replied, strengthen the memories it actually used.
+  await memory.cite(llmReply);
 
-  // Offline consolidation through YOUR LLM (run when the app is idle).
+  // DREAM — offline consolidation through YOUR LLM (run when the app is idle).
   await memory.dream(adjudicate: (request) async {
     final raw = await myLlm.generateJson(request.buildPrompt());
-    return DreamDecision.parseJson(raw);
+    return DreamDecision.parseJson(raw);   // {"action":"keep"} or {"action":"replace","memories":[...]}
   });
 }
 ```
 
-A runnable zero-dependency version (toy embedder + in-memory store) is in [`example/main.dart`](example/main.dart):
-
-```bash
-dart run example/main.dart
-```
+A runnable zero-dependency version (toy embedder + in-memory store) is in [`example/main.dart`](example/main.dart): `dart run example/main.dart`.
 
 ## How it fits into a chat app
 
-The engine never talks to your conversation LLM; you wire its four primitives around your own tool-calling loop:
-
 ```
 user utterance
-   │
-   ├─► memory.retrieve(utterance)          → memory pack
-   │
+   ├─► memory.recall(utterance)            → memory pack
    ├─► your LLM call
    │     system  = EngramPrompts.conversationSystemPromptJa (or En)
-   │     user    = EngramPrompts.buildUserMessage(
-   │                 currentTime: memory.nowLocal(),
-   │                 memoryPack: pack.packText,
-   │                 userText: utterance)
-   │     tools   = [EngramPrompts.saveMemoryToolSpec,
-   │                EngramPrompts.deleteMemoryToolSpec]
-   │
-   ├─► on tool call "save_memory"   → memory.saveMemory(args['text'])
-   ├─► on tool call "delete_memory" → memory.deleteMemory(args['id'])
-   │
-   └─► memory.maintain()
+   │     user    = EngramPrompts.buildUserMessage(currentTime: memory.nowLocal(),
+   │                 memoryPack: pack.packText, userText: utterance)
+   │     tools   = [EngramPrompts.saveMemoryToolSpec, EngramPrompts.deleteMemoryToolSpec]
+   ├─► on tool call "save_memory"   → memory.remember(args['text'], salience: args['salience'] ?? 1)
+   ├─► on tool call "delete_memory" → memory.forget(args['id'])
+   └─► memory.cite(reply)                  → memories the reply quoted as 《id:…》 are strengthened
 ```
 
-Optionally, when a turn saved nothing, run the **extraction fallback**: send `EngramPrompts.buildExtractionInstruction(...)` to your LLM, parse with `EngramPrompts.parseExtractedTexts(raw)`, and feed each string through `saveMemory`.
+Optionally, when a turn saved nothing, run the extraction fallback: send `EngramPrompts.buildExtractionInstruction(...)` to your LLM, parse with `EngramPrompts.parseExtractedTexts(raw)`, and feed each string through `remember`.
 
 ## Time and timezone inputs
 
-Every entry point accepts the current Unix time (seconds) and a timezone alongside the text:
+Every entry point accepts the current Unix time (seconds) and a timezone:
 
 ```dart
-await memory.saveMemory(
-  'ユーザーは2026-04-01にベルリンへ出張した',
-  nowUnix: 1774000000,                                       // explicit 64-bit Unix seconds
-  timezone: const MemoryTimezone('Europe/Berlin', Duration(hours: 2)),
-);
-await memory.retrieve('出張の予定', nowUnix: 1774100000);
+await memory.remember('ユーザーは2026-04-01にベルリンへ出張した',
+    nowUnix: 1774000000,
+    timezone: const MemoryTimezone('Europe/Berlin', Duration(hours: 2)));
+await memory.recall('出張の予定', nowUnix: 1774100000);
 ```
 
-- Omitted values fall back to the injected `clock` / `defaultTimezone`, then to the system clock / UTC.
-- Timezones are stored per memory as `'IANA_name;+HH:MM'`; the explicit offset means local-time formatting (`memory.nowLocal()`, dream prompts) is pure arithmetic — no tz database required. Pure Dart cannot resolve IANA names itself, so supply the offset (e.g. `DateTime.now().timeZoneOffset`, or `package:timezone` for exact historical DST).
-- A `clock` callback (`int Function()` returning Unix seconds) makes the engine fully deterministic for tests and simulations; timestamps later than "now" are clamped so a clock rollback can never mint immortal memories.
+Omitted values fall back to the injected `clock` / `defaultTimezone`, then to the system clock / UTC. Timezones are stored per memory as `'IANA_name;+HH:MM'`, so local-time formatting is pure arithmetic (no tz database) and works for any year. A `clock` callback makes the engine fully deterministic for tests; future timestamps are clamped at load so a clock rollback can never mint immortal memories.
 
 ## The three interfaces
 
@@ -124,131 +112,70 @@ await memory.retrieve('出張の予定', nowUnix: 1774100000);
 
 ```dart
 abstract class Embedder {
-  String get modelId;       // stamped on vectors; switching models self-heals
-  int get dimension;        // must be ≥ config.dim1 (768 by default)
+  String get modelId;       // stamped on vectors; switching models re-embeds every trace from text
+  int get dimension;
   Future<List<Float32List>> embedQueries(List<String> texts);
   Future<List<Float32List>> embedDocuments(List<String> texts);
 }
 ```
 
-Vectors need not be normalised — the engine normalises and MRL-truncates them. Use an MRL-trained model (e.g. EmbeddingGemma) for best L2/L3 quality. `CallbackEmbedder` lets you wire an SDK without declaring a class.
-
-**firebase_ai sketch** (Gemini embeddings, asymmetric task types):
-
-```dart
-final model = FirebaseAI.googleAI().generativeModel(model: 'gemini-embedding-001');
-final embedder = CallbackEmbedder(
-  modelId: 'gemini-embedding-001',
-  dimension: 768,
-  onEmbedDocuments: (texts) => /* batchEmbedContents with taskType RETRIEVAL_DOCUMENT */,
-  onEmbedQueries:   (texts) => /* batchEmbedContents with taskType RETRIEVAL_QUERY */,
-);
-```
-
-**llamadart sketch** (local GGUF embedding model):
-
-```dart
-final llama = Llama(modelPath: 'embeddinggemma-300m.gguf', embedding: true);
-final embedder = CallbackEmbedder(
-  modelId: 'embeddinggemma-300m',
-  dimension: 768,
-  onEmbedDocuments: (texts) async => [
-    for (final t in texts) Float32List.fromList(await llama.embed('title: none | text: $t')),
-  ],
-  onEmbedQueries: (texts) async => [
-    for (final t in texts) Float32List.fromList(await llama.embed('task: search result | query: $t')),
-  ],
-);
-```
+Vectors need not be normalised. `CallbackEmbedder` wires an SDK without declaring a class. If the embedder throws, `remember` still keeps the text (indexed later), `recall` returns nothing, and `dream` re-indexes what it can — the engine never loses data because a model is unavailable. Three parameters depend on the model's cosine distribution and should be calibrated once: `cosineFloor` (baseline cosine of unrelated text, ≈0.4 for EmbeddingGemma), `thetaRelated`, `gistMinCosine`.
 
 ### 2. `MemoryStore` — your database
 
-A typed interface (no SQL leaks through) with five groups: memory rows, vectors, the conflict ring, the dream log and metadata. Only the primitives are abstract; bulk operations and hooks (`runInTransaction`, `backup`, `compact`) have sensible defaults you can override for efficiency.
-
-- `InMemoryStore` (bundled): zero-setup reference implementation with `toJson`/`fromJson`.
-- [`example/sqlite_adapter`](example/sqlite_adapter): complete `package:sqlite3` adapter with WAL, real transactions, a rotating snapshot ring and vacuum — copy it into your app, or use it as the template for drift/Isar/Hive/ObjectBox adapters.
-
-> **Transactionality note**: each dream adjudication (delete cluster → insert replacements) runs inside `runInTransaction`. On stores without transactions a crash inside that window can lose memories; implement `runInTransaction` and `backup` if your data matters.
+Six operations, no query language: `loadAll`, `put`, `remove`, `clear`, `transaction`, `backup` (+ `open`/`close`). The engine holds every trace in RAM (≈35 MB at 10k traces × 768 dims); the store only persists. `InMemoryStore` is bundled (with `toJson`/`fromJson`), and a complete SQLite adapter with WAL, transactions and a rotating snapshot ring ships in [`example/sqlite_adapter`](example/sqlite_adapter).
 
 ### 3. `DreamAdjudicator` — your LLM (dream phase only)
 
 ```dart
-final reports = await memory.dream(adjudicate: (request) async {
-  // request.members: id / text / gen / activation / localTime / timezone
-  final raw = await myLlm.generateJson(request.buildPrompt());   // ja or en
-  return DreamDecision.parseJson(raw);                            // never throws
-});
+typedef DreamAdjudicator = FutureOr<DreamDecision> Function(DreamRequest request);
 ```
 
-The engine enforces every guard itself: replacement texts are shortened to 170 chars, empty ones dropped, generation is capped at 7, mass carries over (sum for merge, split evenly for split, ≤64), clusters with an unchanged membership and a previous `none` verdict are skipped, and a throwing callback leaves the cluster untouched and retryable.
+`request.members` carry id / text / local time / timezone / R; `request.buildPrompt()` gives the consolidation prompt (ja/en); `DreamDecision.parseJson` never throws. The engine enforces every guard: text hygiene, ≤ 8 members per verdict, no more replacements than members, a cosine check against the members (confabulation guard), strength-conserving inheritance, one transaction per cluster, and retry of clusters whose callback threw.
 
-## API reference (engine)
+## API reference
 
 | Method | Purpose |
 |---|---|
-| `initialize()` | Open the store, validate the embedder, write self-description metadata. |
-| `retrieve(query, {nowUnix, timezone})` | READ: chunked query embedding → scoring → thresholds → MMR → ≤1024-char pack; recalled memories get a recall update. Returns `RetrieveResult(packText, recalled)`. |
-| `saveMemory(text, {nowUnix, timezone})` | WRITE: validation → exact-text reinforcement → identity scan → insert / supersede / conflict. Returns `SaveResult` (`inserted` / `updated` / `conflict` / `reinforced` / `rejected` / `rateLimited`). |
-| `deleteMemory(id, {hard})` | DELETE by id only: tombstone (default) or physical. Returns `DeleteResult`. |
-| `maintain({nowUnix})` | Per-turn upkeep: timestamp sanitisation, tombstone sweep, capacity demotion/eviction, periodic `compact()`. No LLM, no embedding. |
-| `dream(adjudicate: …, {budget, nowUnix, timezone, force})` | Offline consolidation: backup → housekeeping → ≤budget LLM adjudications → promotion → capacity → compaction. Returns `List<DreamReport>`. |
-| `stats()` / `totalRecords()` / `activationOf(id)` / `listMemories()` | Introspection. |
-| `nowUnix()` / `nowLocal({nowUnix, timezone})` | Clock helpers (`'2026-06-12 09:30 +09:00'` for prompts). |
-| `reset()` | Erase everything and reinstall metadata. |
+| `initialize()` | Open the store, load and clamp every trace, re-embed stale vectors. |
+| `remember(text, {salience, nowUnix, timezone})` | Store a proposition → `RememberResult` (`inserted` / `reinforced` / `rejected` / `rateLimited`, with `evicted`). |
+| `recall(query, {nowUnix})` | → `RecallResult(packText, recalled)`; injected traces get the half-activation update. |
+| `cite(replyText)` | Complete the strengthening of the traces the reply quoted as `《id:…》`. |
+| `forget(id)` | Physical delete by id → `bool`. |
+| `dream({adjudicate, budget, nowUnix, timezone})` | Offline consolidation → `List<DreamReport>` (`keep` / `replace` / `error`). |
+| `clusters()` | The clusters the next dream would hand to the LLM (no LLM call). |
+| `memories()` / `memory(id)` / `retrievability(m, now)` / `strength(m, now)` | Introspection. |
+| `nowUnix()` / `nowLocal()` / `reset()` | Clock helpers, erase everything. |
 
-All methods are internally serialized; an `EngramMemory` instance is safe to call from interleaving async code. The dream phase can take ~0.5–2 s on mobile at full capacity (pure-Dart k-means over ≤4000×128-d vectors) — run it when idle, or in an isolate with its own store handle.
+All methods are serialized internally; an `EngramMemory` instance is safe to call from interleaving async code. One process owns a store.
 
-## Configuration
+## Configuration (`EngramConfig`, 19 parameters)
 
-All ENGRAM §8 parameters live in `EngramConfig` (const-constructible, `copyWith`, JSON round-trip). Defaults:
-
-| Group | Parameter | Default | Meaning |
-|---|---|---|---|
-| Tiers | `cap1/cap2/cap3` | 1000 / 3000 / 6000 | rows per tier (tombstones included) |
-| | `dim1/dim2/dim3` | 768 / 256 / 128 | MRL vector dims (f32 / int8 / int8) |
-| | `tau1/tau2/tau3` | 7 d / 90 d / 3 y | activation half-lives |
-| Activation | `mMax` | 64 | mass / activation cap |
-| | `refractorySeconds` | 3600 | min interval between mass bonuses |
-| Retrieval | `alpha` | 0.35 | activation floor in the score |
-| | `injectN` | 5 | memories injected per retrieve |
-| | `mmrLambda` | 0.3 | MMR diversity penalty |
-| | `scoreThresholds` | [0.1, 0.2] | progressive filters (strictest first) |
-| | `budgetChars` | 1024 | pack character budget |
-| Identity | `thetaSame` | 0.97 | ≥ → supersede |
-| | `thetaConflict` | 0.85 | conflict band lower bound |
-| | `preciseMargin` | 0.03 | full-precision re-embed margin |
-| Movement | `thetaUp` / `thetaDown` | 16 / 4 | promote / demote hysteresis |
-| Text | `textMax` / `textHardMax` | 170 chars / 1024 bytes | soft shorten / hard reject |
-| | `genMax` | 7 | consolidation generation cap |
-| Dream | `dreamBudget` (`dreamBudgetHard`) | 5 (4096) | adjudications per call |
-| | `clusterMin` / `clusterCohesionMin` | 3 / 0.5 | cluster eligibility |
-| | `dreamMaxMembers` | 64 | members per adjudication |
-| Rings | `conflictCap` / `dreamLogCap` | 256 / 512 | ring buffer sizes |
-| Housekeeping | `tombstoneSweepPct` / `tombstoneSweepAge` | 10% / 7 d | sweep triggers |
-| Limits | `writeRatePerDay` | 2000 | soft write rate |
-| | `hardMemoryRows` | 16384 | hard row cap / loop guard |
-| | `decayExpCap` | 65536 | decay underflow guard |
-| | `compactEvery` | 20 | maintains per `compact()` |
-
-## Storage footprint & performance
-
-With default capacities (10,000 memories) the entire store is **< 10 MB**: L1 vectors 3.0 MB, L2 0.8 MB, L3 0.8 MB, text + metadata ~2 MB. Retrieval is a brute-force scan (≤10k dot products of ≤768 dims ≈ sub-10 ms on a modern phone) — no ANN index to maintain or corrupt.
+| Parameter | Default | Meaning |
+|---|---|---|
+| `capacity` | 10000 | max traces; the weakest old trace is forgotten beyond it |
+| `initialStability` | 1 d | S0 of a new trace |
+| `spacingGain` | 3.0 | stability growth on recall |
+| `maxStability` | 10 y | no immortal memory |
+| `gracePeriod` | 3 d | new traces are protected from eviction (unless they exceed a tenth of capacity) |
+| `cosineFloor` | 0.0 | baseline cosine of unrelated text under your model |
+| `alpha` | 0.35 | retrievability floor in the score |
+| `injectN` / `mmrLambda` | 5 / 0.3 | traces injected per recall, MMR diversity |
+| `minScore` / `relativeScore` | 0.1 / 0.6 | absolute and relative score cuts |
+| `budgetChars` / `maxCues` | 1024 / 8 | pack budget, query cues |
+| `thetaRelated` | 0.75 | neighbourhood (labile) threshold |
+| `dreamBudget` / `dreamMaxMembers` | 5 / 8 | LLM calls per dream, members per cluster |
+| `gistMinCosine` | 0.5 | replacement texts must relate to the cluster |
+| `textMax` / `writesPerDay` | 170 / 1000 | text limit, soft write rate |
 
 ## Testing your integration
 
-The package's test suite shows the patterns: a deterministic token-overlap `FakeEmbedder` and a `VirtualClock` (see [`test/support/fakes.dart`](test/support/fakes.dart)) make every scenario — decay, refractory gating, supersede/conflict thresholds, dreams over virtual months — reproducible without any model or API key. Run:
+The test suite shows the patterns: a deterministic token-overlap `FakeEmbedder` (bit-identical to the Python reference's) and a `VirtualClock` in [`test/support/fakes.dart`](test/support/fakes.dart) make every scenario reproducible; `test/conformance/` holds the scripted scenario and its trace shared with the Python implementation.
 
 ```bash
-dart test                          # package suite (63+ tests)
+dart test                                # package suite (incl. the 3000-year simulation)
 cd example/sqlite_adapter && dart test   # adapter suite
 ```
-
-## Design notes & limitations
-
-- **Conversation LLM is app-side by design** — the engine stays usable with any SDK, tool-calling convention or agent framework.
-- **No IANA tz database** — offsets are caller-supplied and frozen per memory (the spec stores `name;+offset` precisely so formatting survives without tzdata). Use `package:timezone` in your app if you need exact historical DST.
-- **Soft text length counts UTF-16 code units** (Dart `String.length`); identical to character counts for Japanese/CJK and ASCII.
-- **Embedding-model switches self-heal**: old-model vectors are GC'd during dream housekeeping; promotion re-embeds with the active model.
 
 ## License
 

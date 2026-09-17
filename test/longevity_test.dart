@@ -1,71 +1,81 @@
 @Tags(['slow'])
 library;
 
+import 'dart:math';
+
 import 'package:long_term_memory/long_term_memory.dart';
 import 'package:test/test.dart';
 
 import 'support/fakes.dart';
 
-/// Compressed port of the reference longevity scenario: months of virtual
-/// time, hundreds of writes, periodic maintenance and dreams — asserting
-/// the invariants hold and that important facts stay retrievable while
-/// noise fades.
+/// Millennia of virtual time: writes every few days, weekly recalls of a
+/// handful of key facts, monthly dreams, occasional decade-long silences
+/// and a clock fault. Asserts every invariant of SPEC §7 and that the
+/// rehearsed facts remain retrievable while noise is forgotten.
 void main() {
-  test('months of use keep invariants and recall quality', () async {
-    final clock = VirtualClock();
-    final store = InMemoryStore();
-    final memory = EngramMemory(
-      store: store,
-      embedder: FakeEmbedder(),
-      config: const EngramConfig(cap1: 40, cap2: 60, cap3: 80),
-      clock: clock.call,
-      defaultTimezone: const MemoryTimezone('Asia/Tokyo', Duration(hours: 9)),
+  test('3000 virtual years keep invariants and recall quality', () async {
+    const config = EngramConfig(capacity: 300, writesPerDay: 50);
+    final (memory, clock, store) = await build(
+      config: config,
+      embedder: FakeEmbedder(dimension: 32),
     );
-    await memory.initialize();
-
-    const keyFact = 'ユーザーは抹茶アイスクリームが大好物';
-    await memory.saveMemory(keyFact);
-
-    // 90 virtual days: daily noise writes, the key fact rehearsed weekly,
-    // a dream every 10 days.
-    for (var day = 1; day <= 90; day++) {
-      clock.advanceDays(1);
-      await memory.saveMemory('day$day note topic$day detail${day % 7}');
-      if (day % 7 == 0) {
-        final r = await memory.retrieve('抹茶アイスクリームは好き？');
-        expect(r.recalled.map((m) => m.text), contains(keyFact),
-            reason: 'key fact must stay retrievable on day $day');
+    final rng = Random(7);
+    const facts = [
+      'user likes matcha ice cream',
+      'user was born in kyoto japan',
+      'user has a cat named tama',
+    ];
+    for (final f in facts) {
+      await memory.remember(f, salience: 2);
+    }
+    const day = 86400;
+    var writes = 0, recalls = 0, dreams = 0;
+    final start = clock.t;
+    for (var d = 0; d < 3000 * 365; d += 3) {
+      clock.advance(3 * day);
+      if (rng.nextInt(1000) == 0) clock.advance(10 * 365 * day); // silence
+      await memory.remember('note ${rng.nextInt(1 << 30)} topic${d % 97}');
+      writes++;
+      if (d % 7 < 3) {
+        final f = facts[rng.nextInt(facts.length)];
+        final r = await memory.recall(f);
+        expect(r.recalled.map((c) => c.memory.text), contains(f),
+            reason: 'key fact must stay retrievable on day $d');
+        recalls++;
       }
-      await memory.maintain();
-      if (day % 10 == 0) {
-        await memory.dream(adjudicate: mergeToGist, budget: 3);
+      if (d % 30 < 3) {
+        await memory.dream(adjudicate: mergeToGist, budget: 2);
+        dreams++;
+      }
+      if (d == 1500 * 365) {
+        // Clock fault: jump 200 years ahead, then back.
+        final t = clock.t;
+        clock.t += 200 * 365 * day;
+        await memory.recall(facts[0]);
+        clock.t = t;
       }
     }
-
-    final stats = await memory.stats();
-    // Invariants: capacities respected (I4), mass bounded (I1), gen ≤ 7
-    // (I7), no dangling vectors (I6), rings bounded (I11).
-    expect(stats.l1, lessThanOrEqualTo(40));
-    expect(stats.l2, lessThanOrEqualTo(60));
-    expect(stats.l3, lessThanOrEqualTo(80));
-    expect(stats.conflicts, lessThanOrEqualTo(256));
-    expect(stats.dreamLog, lessThanOrEqualTo(512));
-    final rows = await store.listMemories();
-    final ids = rows.map((m) => m.id).toSet();
+    final rows = await store.loadAll();
+    expect(rows.length, lessThanOrEqualTo(config.capacity));
+    final now = clock.t;
     for (final m in rows) {
-      expect(m.mass, lessThanOrEqualTo(64.0));
-      expect(m.gen, lessThanOrEqualTo(7));
-      expect(m.text.length, lessThanOrEqualTo(170));
+      expect(m.stability, inInclusiveRange(1, config.maxStability));
+      expect(m.text.length, inInclusiveRange(1, config.textMax));
+      expect(m.vector.length, 32);
+      final r = memory.retrievability(m, now);
+      expect(r, inInclusiveRange(0, 1));
+      expect(r.isNaN, isFalse);
     }
-    for (final v in await store.listVectors()) {
-      expect(ids, contains(v.memoryId));
+    for (final f in facts) {
+      final r = await memory.recall(f);
+      expect(r.recalled.first.memory.text, f);
+      expect(r.recalled.first.memory.stability, greaterThan(365 * day));
     }
-
-    // The rehearsed key fact outranks same-age noise.
-    final final$ = await memory.retrieve('抹茶アイスクリーム');
-    expect(final$.recalled.first.text, keyFact);
-    // Weekly rehearsal equilibrium for L1 (τ=7 d): m ≈ m/2 + 1 → 2.
-    final keyRow = (await store.getLiveMemoryByText(keyFact))!;
-    expect(keyRow.mass, greaterThan(1.5));
-  }, timeout: const Timeout(Duration(minutes: 3)));
+    expect(int.parse(formatLocal(now, 'UTC;+00:00').substring(0, 4)),
+        greaterThan(5000));
+    expect((now - start) ~/ (365 * day), greaterThanOrEqualTo(3000));
+    expect(writes, greaterThan(300000));
+    expect(recalls, greaterThan(100000));
+    expect(dreams, greaterThan(30000));
+  }, timeout: const Timeout(Duration(minutes: 10)));
 }

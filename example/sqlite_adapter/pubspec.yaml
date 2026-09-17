@@ -4,7 +4,7 @@ description: >-
   package:sqlite3 — WAL, transactions, rotating backups and vacuum included.
   Copy it into your app and adapt freely (it also works with sqlite3_flutter_libs
   on mobile).
-version: 0.1.0
+version: 0.2.0
 publish_to: none
 
 environment:

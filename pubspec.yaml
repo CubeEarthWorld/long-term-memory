@@ -1,19 +1,19 @@
 name: long_term_memory
 description: >-
   A portable, dependency-light long-term memory engine for LLM applications
-  (ENGRAM v1.1). Bring your own LLM, embedding model and database: the package
-  contains the full 3-tier memory algorithm (episodic / semantic / schema),
-  activation decay, identity thresholds, MMR retrieval and dream-phase
-  consolidation, while every external capability is injected through small
+  (ENGRAM v2). Bring your own LLM, embedding model and database: the package
+  contains the full memory-trace algorithm (forgetting curve with spacing,
+  strength-based forgetting, MMR retrieval, citation and dream-phase
+  consolidation), while every external capability is injected through small
   abstract interfaces.
-version: 0.1.0
+version: 0.2.0
 repository: https://github.com/CubeEarthWorld/llm-long-term-memory
 
 environment:
   sdk: ^3.4.0
 
-dependencies:
-  crypto: ^3.0.3
+dependencies: {}
+
 
 dev_dependencies:
   lints: ^4.0.0
