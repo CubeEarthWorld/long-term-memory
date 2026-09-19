@@ -41,7 +41,6 @@ final embeddingModel =
 
 final embedder = CallbackEmbedder(
   modelId: 'gemini-embedding-001',
-  dimension: 768,
   onEmbedDocuments: (texts) async {
     final res = await embeddingModel.batchEmbedContents([
       for (final t in texts)
@@ -74,7 +73,6 @@ await memory.dream(adjudicate: (request) async {
 final embedLlama = Llama(modelPath: 'embeddinggemma-300m-qat-Q4_0.gguf', embedding: true);
 final embedder = CallbackEmbedder(
   modelId: 'embeddinggemma-300m',
-  dimension: 768,
   onEmbedDocuments: (texts) async => [
     for (final t in texts) Float32List.fromList(await embedLlama.embed('title: none | text: $t')),
   ],

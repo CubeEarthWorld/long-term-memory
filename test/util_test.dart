@@ -2,6 +2,10 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:long_term_memory/long_term_memory.dart';
+import 'package:long_term_memory/src/text.dart';
+import 'package:long_term_memory/src/timezone.dart';
+import 'package:long_term_memory/src/ulid.dart';
+import 'package:long_term_memory/src/vector_math.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -35,15 +39,12 @@ void main() {
   });
 
   test('ids sort by time and survive a 50-bit millisecond clock', () {
-    var t = 1700000000000;
-    final gen = UlidGenerator(millis: () => t, random: Random(1));
-    final a = gen.next();
-    t += 1;
-    final b = gen.next();
+    final rng = Random(1);
+    final a = ulid(1700000000000, random: rng);
+    final b = ulid(1700000000001, random: rng);
     expect(a.length, 26);
     expect(a.compareTo(b), lessThan(0));
-    t = 1 << 49;
-    final far = gen.next();
+    final far = ulid(1 << 49, random: rng);
     expect(far.compareTo(b), greaterThan(0));
     expect(far.substring(0, 10), isNot(startsWith('0')));
   });
@@ -57,10 +58,10 @@ void main() {
     expect(l2Normalized(Float32List(3)), [0, 0, 0]);
   });
 
-  test('config json round-trip and lenient parse', () {
-    const c = EngramConfig(capacity: 42, alpha: 0.5);
-    expect(EngramConfig.fromJson(c.toJson()).capacity, 42);
-    expect(EngramConfig.fromJson({'alpha': 'bad'}).alpha, 0.35);
+  test('config lenient parse', () {
+    final c = EngramConfig.fromJson(
+        {'capacity': 42, 'alpha': '0.5', 'minScore': 'bad'});
+    expect((c.capacity, c.alpha, c.minScore), (42, 0.5, 0.1));
   });
 
   test('InMemoryStore json round-trip', () async {

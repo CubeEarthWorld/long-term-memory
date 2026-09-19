@@ -6,7 +6,7 @@ description: >-
   strength-based forgetting, MMR retrieval, citation and dream-phase
   consolidation), while every external capability is injected through small
   abstract interfaces.
-version: 0.2.0
+version: 0.3.0
 repository: https://github.com/CubeEarthWorld/llm-long-term-memory
 
 environment:

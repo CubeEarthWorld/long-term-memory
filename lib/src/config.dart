@@ -112,75 +112,8 @@ class EngramConfig {
   /// bounds how much of the store a write flood can displace.
   final int writesPerDay;
 
-  /// Returns a copy with the given fields replaced.
-  EngramConfig copyWith({
-    int? capacity,
-    double? initialStability,
-    double? spacingGain,
-    double? maxStability,
-    double? gracePeriod,
-    double? cosineFloor,
-    double? alpha,
-    int? injectN,
-    double? mmrLambda,
-    double? minScore,
-    double? relativeScore,
-    int? budgetChars,
-    int? maxCues,
-    double? thetaRelated,
-    int? dreamBudget,
-    int? dreamMaxMembers,
-    double? gistMinCosine,
-    int? textMax,
-    int? writesPerDay,
-  }) =>
-      EngramConfig(
-        capacity: capacity ?? this.capacity,
-        initialStability: initialStability ?? this.initialStability,
-        spacingGain: spacingGain ?? this.spacingGain,
-        maxStability: maxStability ?? this.maxStability,
-        gracePeriod: gracePeriod ?? this.gracePeriod,
-        cosineFloor: cosineFloor ?? this.cosineFloor,
-        alpha: alpha ?? this.alpha,
-        injectN: injectN ?? this.injectN,
-        mmrLambda: mmrLambda ?? this.mmrLambda,
-        minScore: minScore ?? this.minScore,
-        relativeScore: relativeScore ?? this.relativeScore,
-        budgetChars: budgetChars ?? this.budgetChars,
-        maxCues: maxCues ?? this.maxCues,
-        thetaRelated: thetaRelated ?? this.thetaRelated,
-        dreamBudget: dreamBudget ?? this.dreamBudget,
-        dreamMaxMembers: dreamMaxMembers ?? this.dreamMaxMembers,
-        gistMinCosine: gistMinCosine ?? this.gistMinCosine,
-        textMax: textMax ?? this.textMax,
-        writesPerDay: writesPerDay ?? this.writesPerDay,
-      );
-
-  /// JSON form (for persisting / displaying the active configuration).
-  Map<String, Object?> toJson() => {
-        'capacity': capacity,
-        'initialStability': initialStability,
-        'spacingGain': spacingGain,
-        'maxStability': maxStability,
-        'gracePeriod': gracePeriod,
-        'cosineFloor': cosineFloor,
-        'alpha': alpha,
-        'injectN': injectN,
-        'mmrLambda': mmrLambda,
-        'minScore': minScore,
-        'relativeScore': relativeScore,
-        'budgetChars': budgetChars,
-        'maxCues': maxCues,
-        'thetaRelated': thetaRelated,
-        'dreamBudget': dreamBudget,
-        'dreamMaxMembers': dreamMaxMembers,
-        'gistMinCosine': gistMinCosine,
-        'textMax': textMax,
-        'writesPerDay': writesPerDay,
-      };
-
-  /// Lenient inverse of [toJson]: missing or mistyped values fall back to
-  /// the defaults.
+  /// Lenient JSON parse (keys = field names): missing or mistyped values
+  /// fall back to the defaults.
   factory EngramConfig.fromJson(Map<String, Object?> json) {
     const d = EngramConfig();
     int i(String k, int def) => switch (json[k]) {

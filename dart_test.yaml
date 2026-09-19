@@ -1,0 +1,2 @@
+tags:
+  slow:   # the 3000-virtual-year simulation (~20 s): dart test -x slow

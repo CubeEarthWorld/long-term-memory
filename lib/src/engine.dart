@@ -2,19 +2,18 @@
 /// (remember / recall / forget) and a sleep-phase dream.
 library;
 
-import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import '../config.dart';
-import '../dream/adjudicator.dart';
-import '../embedder.dart';
-import '../models.dart';
-import '../store/memory_store.dart';
-import '../text.dart';
-import '../timezone.dart';
-import '../ulid.dart';
-import '../vector_math.dart';
+import 'config.dart';
+import 'dream/adjudicator.dart';
+import 'embedder.dart';
+import 'models.dart';
+import 'store/memory_store.dart';
+import 'text.dart';
+import 'timezone.dart';
+import 'ulid.dart';
+import 'vector_math.dart';
 
 /// Seeds examined per dream, as a multiple of the LLM budget (bounds the
 /// cost of a dream to O(budget · capacity · dim)).
@@ -38,9 +37,7 @@ class EngramMemory {
     int Function()? clock,
     MemoryTimezone? defaultTimezone,
   })  : _clock = clock,
-        _defaultTz = defaultTimezone ?? MemoryTimezone.utc {
-    _ulid = UlidGenerator(millis: () => nowUnix() * 1000);
-  }
+        _defaultTz = defaultTimezone ?? MemoryTimezone.utc;
 
   /// The injected storage backend.
   final MemoryStore store;
@@ -53,7 +50,6 @@ class EngramMemory {
 
   final int Function()? _clock;
   final MemoryTimezone _defaultTz;
-  late final UlidGenerator _ulid;
   final Map<String, Memory> _traces = {};
   final List<int> _writeTimes = [];
   final Map<String, Recalled> _lastRecall = {};
@@ -153,10 +149,12 @@ class EngramMemory {
       } catch (_) {
         return;
       }
-      for (var j = 0; j < batch.length; j++) {
-        await _put(batch[j].copyWith(
-            modelId: embedder.modelId, vector: l2Normalized(vectors[j])));
-      }
+      await store.transaction(() async {
+        for (var j = 0; j < batch.length; j++) {
+          await _put(batch[j].copyWith(
+              modelId: embedder.modelId, vector: l2Normalized(vectors[j])));
+        }
+      });
     }
   }
 
@@ -166,6 +164,9 @@ class EngramMemory {
   List<Memory> get _stale => _traces.values
       .where((m) => m.modelId != embedder.modelId)
       .toList(growable: false);
+
+  bool get _anyStale =>
+      _traces.values.any((m) => m.modelId != embedder.modelId);
 
   /// Erases everything.
   Future<void> reset() => _serialize(() async {
@@ -232,14 +233,14 @@ class EngramMemory {
         }
         final related = best >= config.thetaRelated;
         final m = Memory(
-          id: _ulid.next(),
+          id: ulid(now * 1000),
           text: text,
           createdAt: now,
           tz: (timezone ?? _defaultTz).storageField,
           lastRecall: now,
           stability: _clampStability(
               config.initialStability * salience.clamp(0.0, 10.0)),
-          consolidated: v != null && !related && _stale.isEmpty,
+          consolidated: v != null && !related && !_anyStale,
           modelId: v == null ? '' : embedder.modelId,
           vector: v ?? Float32List(0),
         );
@@ -264,6 +265,8 @@ class EngramMemory {
   Future<RecallResult> recall(String query, {int? nowUnix}) =>
       _serialize(() async {
         final now = nowUnix ?? this.nowUnix();
+        _lastRecall
+            .clear(); // a recall always ends the previous citation window
         final parts = cues(query, config.maxCues);
         if (parts.isEmpty || _traces.isEmpty) return RecallResult.empty;
         List<Float32List> qs;
@@ -293,7 +296,6 @@ class EngramMemory {
         final lines = <String>[];
         final packed = <Recalled>[];
         var used = 0;
-        _lastRecall.clear();
         // One operation = one commit.
         await store.transaction(() async {
           for (final c in _mmr(pool)) {
@@ -319,12 +321,13 @@ class EngramMemory {
         final ids = <String>[];
         for (final match in RegExp('《id:([^》]+)》').allMatches(replyText)) {
           final c = _lastRecall.remove(match.group(1));
-          final m = c == null ? null : _traces[c.memory.id];
+          if (c == null) continue;
+          final m = _traces[c.memory.id];
           if (m == null) continue;
           final partial = 1 +
               config.spacingGain *
                   0.5 *
-                  _activation(c!.cosine) *
+                  _activation(c.cosine) *
                   (1 - c.retrievability);
           final full = 1 + config.spacingGain * (1 - c.retrievability);
           await _put(m.copyWith(
@@ -442,9 +445,9 @@ class EngramMemory {
   List<Memory> _cluster(Memory seed) {
     final near = <(double, Memory)>[
       for (final m in _indexed)
-        if (m.id != seed.id &&
-            dot(m.vector, seed.vector) >= config.thetaRelated)
-          (dot(m.vector, seed.vector), m),
+        if (m.id != seed.id)
+          for (final cos in [dot(m.vector, seed.vector)])
+            if (cos >= config.thetaRelated) (cos, m),
     ]..sort((a, b) => b.$1.compareTo(a.$1));
     return [seed, ...near.take(config.dreamMaxMembers - 1).map((e) => e.$2)];
   }
@@ -466,7 +469,7 @@ class EngramMemory {
         var left = budget ?? config.dreamBudget;
         final reports = <DreamReport>[];
         final failed = <String>{}; // members of clusters whose LLM call threw
-        for (final s in _seeds.take(_seedsPerBudget * left)) {
+        for (final s in _seeds.take(_seedsPerBudget * math.max(left, 0))) {
           final seed = _traces[s.id];
           if (seed == null || seed.consolidated || failed.contains(s.id)) {
             continue;
@@ -526,9 +529,11 @@ class EngramMemory {
         ? const <Memory>[]
         : await _gists(texts, cluster, now, tz);
     if (gists.isEmpty) {
-      for (final m in cluster) {
-        await _put(m.copyWith(consolidated: true));
-      }
+      await store.transaction(() async {
+        for (final m in cluster) {
+          await _put(m.copyWith(consolidated: true));
+        }
+      });
       return DreamReport(
           action: DreamAction.keep, before: cluster, after: const []);
     }
@@ -570,15 +575,14 @@ class EngramMemory {
       }
       if (best < config.gistMinCosine) return const [];
     }
-    var maxS = 0.0;
-    var sumSR = 0.0;
-    for (final m in cluster) {
-      maxS = math.max(maxS, m.stability);
-      sumSR += strength(m, now);
-    }
     final strongest =
         cluster.reduce((a, b) => a.stability >= b.stability ? a : b);
-    final stability = _clampStability(maxS + sumSR - strength(strongest, now));
+    var sumSR = 0.0;
+    for (final m in cluster) {
+      sumSR += strength(m, now);
+    }
+    final stability =
+        _clampStability(strongest.stability + sumSR - strength(strongest, now));
     final r = math.min(1.0, sumSR / stability);
     // Half-lives already elapsed for the gist (64 ⇒ R underflows to 0).
     final elapsed = r > 0 ? math.min(64.0, -math.log(r) / math.ln2) : 64.0;
@@ -586,7 +590,7 @@ class EngramMemory {
     return [
       for (var i = 0; i < texts.length; i++)
         Memory(
-          id: _ulid.next(),
+          id: ulid(now * 1000),
           text: texts[i],
           createdAt: now,
           tz: tz,

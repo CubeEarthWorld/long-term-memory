@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import '../models.dart';
 
 /// The storage interface — implemented by the application over any database.
@@ -9,10 +7,12 @@ import '../models.dart';
 /// put / remove single rows, clear, and two optional hooks. No SQL or query
 /// semantics leak through; all memory logic lives in the engine.
 ///
-/// **Transactionality**: the engine wraps each dream replacement (delete a
-/// cluster + insert its gists) in [transaction]. On a non-transactional
-/// store a crash inside that window can lose members without their
-/// replacement; implement [transaction] and [backup] if your data matters.
+/// **Transactionality**: the engine wraps every operation's writes in
+/// [transaction] — a remember (insert + eviction), a recall's strength
+/// updates, and a dream replacement (delete a cluster + insert its gists). On
+/// a non-transactional store a crash inside that window can lose members
+/// without their replacement; implement [transaction] and [backup] if your
+/// data matters.
 abstract class MemoryStore {
   /// Opens / migrates the backing storage. Called once by `initialize()`.
   Future<void> open() async {}

@@ -150,7 +150,8 @@ class Recalled {
   /// The trace (state *before* the recall update).
   final Memory memory;
 
-  /// Final score `max(0,cos)·(α + (1−α)·R)`.
+  /// Final score `a·(α + (1−α)·R)` with the cue activation `a` (cosine
+  /// rescaled above `cosineFloor`).
   final double score;
 
   /// Cosine between query and trace.

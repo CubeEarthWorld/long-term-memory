@@ -27,7 +27,6 @@ class VirtualClock {
 class FakeEmbedder implements Embedder {
   FakeEmbedder({this.dimension = 64, this.modelId = 'fake/token-overlap'});
 
-  @override
   final int dimension;
 
   @override
@@ -98,8 +97,6 @@ class FakeEmbedder implements Embedder {
 /// Embedder that always throws (simulates an unavailable model).
 class BrokenEmbedder implements Embedder {
   @override
-  int get dimension => 64;
-  @override
   String get modelId => 'fake/broken';
   @override
   Future<List<Float32List>> embedDocuments(List<String> texts) =>
@@ -134,7 +131,3 @@ Future<(EngramMemory, VirtualClock, InMemoryStore)> build({
   await memory.initialize();
   return (memory, clock, s);
 }
-
-/// `n` distinct tokens with [prefix]; disjoint prefixes are near-orthogonal.
-String tokensOf(int n, [String prefix = 't']) =>
-    [for (var i = 0; i < n; i++) '$prefix$i'].join(' ');

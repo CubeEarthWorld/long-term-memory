@@ -5,10 +5,9 @@ library;
 import 'dart:math';
 import 'dart:typed_data';
 
-/// Returns an L2-normalised copy of the first [dim] components of [v]
-/// (zero vectors are returned as-is).
-Float32List l2Normalized(List<double> v, {int? dim}) {
-  final n = dim == null ? v.length : min(dim, v.length);
+/// Returns an L2-normalised copy of [v] (zero vectors are returned as-is).
+Float32List l2Normalized(List<double> v) {
+  final n = v.length;
   var sum = 0.0;
   for (var i = 0; i < n; i++) {
     sum += v[i] * v[i];
