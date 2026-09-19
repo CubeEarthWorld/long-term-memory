@@ -21,15 +21,11 @@ library;
 
 export 'src/config.dart' show EngramConfig;
 export 'src/dream/adjudicator.dart'
-    show
-        DreamAdjudicator,
-        DreamDecision,
-        DreamMember,
-        DreamRequest,
-        relaxedJsonDecode;
+    show DreamAdjudicator, DreamDecision, DreamMember, DreamRequest;
 export 'src/dream/prompts.dart' show EngramLocale, EngramPrompts;
 export 'src/embedder.dart' show CallbackEmbedder, Embedder;
-export 'src/engine/engine.dart' show EngramMemory;
+export 'src/engine.dart' show EngramMemory;
+export 'src/json.dart' show relaxedJsonDecode;
 export 'src/models.dart'
     show
         DreamAction,
@@ -41,8 +37,5 @@ export 'src/models.dart'
         RememberResult;
 export 'src/store/in_memory_store.dart' show InMemoryStore;
 export 'src/store/memory_store.dart' show MemoryStore;
-export 'src/text.dart' show cleanText, cues, shorten;
-export 'src/timezone.dart'
-    show MemoryTimezone, formatLocal, formatUtcOffset, parseUtcOffset;
-export 'src/ulid.dart' show UlidGenerator;
-export 'src/vector_math.dart' show dot, l2Normalized, packF32, unpackF32;
+export 'src/timezone.dart' show MemoryTimezone, formatLocal;
+export 'src/vector_math.dart' show l2Normalized, packF32, unpackF32;

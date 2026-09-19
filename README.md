@@ -113,7 +113,6 @@ Omitted values fall back to the injected `clock` / `defaultTimezone`, then to th
 ```dart
 abstract class Embedder {
   String get modelId;       // stamped on vectors; switching models re-embeds every trace from text
-  int get dimension;
   Future<List<Float32List>> embedQueries(List<String> texts);
   Future<List<Float32List>> embedDocuments(List<String> texts);
 }

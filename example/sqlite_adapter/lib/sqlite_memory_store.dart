@@ -1,6 +1,6 @@
 /// Example [MemoryStore] adapter over `package:sqlite3`: one table, WAL
-/// mode, real transactions for dream replacements and a rotating snapshot
-/// ring for [backup]. On Flutter, add `sqlite3_flutter_libs` and this file
+/// mode, real transactions (one per engine operation) and a rotating
+/// snapshot ring for [backup]. On Flutter, add `sqlite3_flutter_libs` and this file
 /// works unchanged.
 library;
 

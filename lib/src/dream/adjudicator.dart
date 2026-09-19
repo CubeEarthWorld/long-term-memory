@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import '../json.dart';
 import 'prompts.dart';
 
 /// The dream-phase LLM callback — implemented by the application.
@@ -101,44 +102,13 @@ class DreamDecision {
     final obj = relaxedJsonDecode(raw);
     if (obj is! Map) return const DreamDecision.keep();
     final action = (obj['action'] ?? '').toString().trim().toLowerCase();
-    final memsRaw = obj['memories'];
-    if (action == 'keep' || memsRaw is! List) {
-      return const DreamDecision.keep();
-    }
-    return DreamDecision([
-      for (final item in memsRaw)
-        if (_textOf(item).isNotEmpty) _textOf(item),
-    ]);
+    if (action == 'keep') return const DreamDecision.keep();
+    return DreamDecision(jsonTexts(obj['memories']));
   }
-
-  static String _textOf(Object? item) =>
-      (item is Map ? item['text'] : item)?.toString().trim() ?? '';
 
   /// Replacement propositions (empty = keep).
   final List<String> memories;
 
   /// Whether the verdict is "keep".
   bool get isKeep => memories.isEmpty;
-}
-
-/// Best-effort JSON parse tolerant of code fences and surrounding prose.
-/// Returns the decoded object, or `null` when nothing parseable is found.
-Object? relaxedJsonDecode(String? text) {
-  if (text == null || text.trim().isEmpty) return null;
-  final t = text
-      .trim()
-      .replaceAll(RegExp(r'^```(?:json)?', multiLine: true), '')
-      .replaceAll(RegExp(r'```$', multiLine: true), '')
-      .trim();
-  try {
-    return jsonDecode(t);
-  } on FormatException {
-    final m = RegExp(r'\{.*\}|\[.*\]', dotAll: true).firstMatch(t);
-    if (m == null) return null;
-    try {
-      return jsonDecode(m.group(0)!);
-    } on FormatException {
-      return null;
-    }
-  }
 }

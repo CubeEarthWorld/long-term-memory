@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 — smaller surface, same engine
+
+Structural clean-up; the conformance trace shared with the Python reference is
+unchanged. Not backward compatible for callers of the removed API.
+
+- **Public API narrowed** to what an integration needs: `EngramConfig.copyWith`
+  / `toJson`, `MemoryTimezone.fromDateTime` / `local`, `UlidGenerator`,
+  `Embedder.dimension` (never read by the engine), `l2Normalized(dim:)` and the
+  internal helpers (`cleanText`, `cues`, `shorten`, `dot`, `formatUtcOffset`,
+  `parseUtcOffset`) are gone. `relaxedJsonDecode` moved to `src/json.dart` and
+  stays exported.
+- Ids are generated from the operation's `nowUnix` (as in Python); backdated
+  writes now get correctly ordered ids.
+- `dream(budget: <0)` no longer throws; a `recall` that injects nothing still
+  ends the previous citation window; the dream keep-path and re-indexing commit
+  in one transaction (SPEC §5).
+- `EngramPrompts.buildUserMessage` is one function (locale parameter);
+  `src/engine/engine.dart` flattened to `src/engine.dart`; stale v1 wording in
+  doc comments removed.
+
 ## 0.2.0 — ENGRAM v2 (trace model)
 
 A redesign from first principles of human memory; not backward compatible.

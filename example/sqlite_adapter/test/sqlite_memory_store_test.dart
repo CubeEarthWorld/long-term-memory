@@ -40,7 +40,8 @@ void main() {
     expect(rows[1].consolidated, isTrue);
     expect(rows[0].vector, [1, 0, 0]);
     await store.put(mem('a').copyWith(stability: 99));
-    expect((await store.loadAll()).firstWhere((m) => m.id == 'a').stability, 99);
+    expect(
+        (await store.loadAll()).firstWhere((m) => m.id == 'a').stability, 99);
     await store.remove('a');
     expect((await store.loadAll()).map((m) => m.id), ['b']);
   });

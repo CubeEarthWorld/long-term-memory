@@ -2,7 +2,7 @@
 /// UTC offset.
 ///
 /// ENGRAM stores the timezone of each memory as the string
-/// `'IANA_name;+HH:MM'` (e.g. `'Asia/Tokyo;+09:00'`, spec §3.2): the IANA
+/// `'IANA_name;+HH:MM'` (e.g. `'Asia/Tokyo;+09:00'`, SPEC §2): the IANA
 /// name survives for tooling that has a tz database, while the explicit
 /// offset keeps local-time formatting working with pure arithmetic — no
 /// timezone database is required by this package.
@@ -14,17 +14,6 @@ class MemoryTimezone {
   /// Creates a timezone from an IANA [name] (e.g. `'Asia/Tokyo'`) and its
   /// current UTC [offset] (e.g. `Duration(hours: 9)`).
   const MemoryTimezone(this.name, this.offset);
-
-  /// Builds a timezone from a [DateTime]'s platform-reported zone.
-  ///
-  /// Note: `DateTime.timeZoneName` is a platform abbreviation (e.g. `JST`),
-  /// not always an IANA name. Prefer the main constructor when you know the
-  /// IANA name.
-  factory MemoryTimezone.fromDateTime(DateTime dateTime) =>
-      MemoryTimezone(dateTime.timeZoneName, dateTime.timeZoneOffset);
-
-  /// The device's current local timezone.
-  factory MemoryTimezone.local() => MemoryTimezone.fromDateTime(DateTime.now());
 
   /// Parses the stored `'name;+HH:MM'` field back into a [MemoryTimezone].
   ///
@@ -47,11 +36,8 @@ class MemoryTimezone {
   /// Fixed UTC offset at write time.
   final Duration offset;
 
-  /// The offset as `'+HH:MM'` / `'-HH:MM'`.
-  String get offsetString => formatUtcOffset(offset);
-
   /// The canonical stored form, e.g. `'Asia/Tokyo;+09:00'`.
-  String get storageField => '$name;$offsetString';
+  String get storageField => '$name;${formatUtcOffset(offset)}';
 
   @override
   String toString() => storageField;
@@ -86,12 +72,10 @@ Duration? parseUtcOffset(String text) {
 /// Formats a Unix time as a local datetime string using a stored tz field.
 ///
 /// Returns `'2026-06-11 21:30 +09:00'` for `formatLocal(unix, 'Asia/Tokyo;+09:00')`.
-/// Only the explicit offset is used (pure arithmetic, ENGRAM §3.2) — no
+/// Only the explicit offset is used (pure arithmetic, SPEC §2) — no
 /// timezone database lookup, so it works for any year including >9999.
 String formatLocal(int unixSeconds, String tzField) {
-  final parts = tzField.split(';');
-  final offText = parts.length > 1 ? parts[1] : '+00:00';
-  final offset = parseUtcOffset(offText) ?? Duration.zero;
+  final offset = MemoryTimezone.parse(tzField).offset;
   final local = unixSeconds + offset.inSeconds;
   var days = local ~/ 86400;
   var secondsOfDay = local - days * 86400;
@@ -110,8 +94,8 @@ String formatLocal(int unixSeconds, String tzField) {
 }
 
 /// Converts a proleptic Gregorian ordinal (1 = 0001-01-01) to (year, month,
-/// day). Works for any year — used so timestamps beyond Dart's `DateTime`
-/// comfort zone still format (64-bit Unix seconds per spec I9).
+/// day). Works for any year (64-bit Unix seconds, SPEC §2), mirroring the
+/// Python reference so both languages format identically.
 (int, int, int) ymdFromOrdinal(int ordinal) {
   var n = ordinal - 1;
   final n400 = n ~/ 146097;

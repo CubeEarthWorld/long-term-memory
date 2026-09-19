@@ -62,7 +62,7 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 
 ## 3 つのインタフェース
 
-- **`Embedder`** — `modelId` / `dimension` / `embedQueries` / `embedDocuments`。正規化は不要。埋め込みが失敗しても `remember` は本文を保持し（後で索引化）、`recall` は空を返し、`dream` は可能な範囲で再索引します。モデル依存の 3 パラメータ（`cosineFloor`≈EmbeddingGemma で 0.4、`thetaRelated`、`gistMinCosine`）は一度較正してください。
+- **`Embedder`** — `modelId` / `embedQueries` / `embedDocuments`。正規化は不要。埋め込みが失敗しても `remember` は本文を保持し（後で索引化）、`recall` は空を返し、`dream` は可能な範囲で再索引します。モデル依存の 3 パラメータ（`cosineFloor`≈EmbeddingGemma で 0.4、`thetaRelated`、`gistMinCosine`）は一度較正してください。
 - **`MemoryStore`** — `loadAll / put / remove / clear / transaction / backup`（＋ open/close）の 6 操作。全件は RAM に保持され（1 万件 × 768 次元で約 35 MB）、ストアは永続化のみ。`InMemoryStore` 同梱、SQLite アダプタ（WAL・トランザクション・スナップショットリング）は [`example/sqlite_adapter`](example/sqlite_adapter)。
 - **`DreamAdjudicator`** — `DreamRequest` を受けて `DreamDecision` を返すコールバック。本文の清浄化・1 裁定 ≤ 8 行・成員数を超える置換の拒否・成員とのコサイン検査（作話ガード）・強度保存の継承・1 クラスタ = 1 トランザクション・失敗クラスタの再試行はエンジンが保証します。
 
