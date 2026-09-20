@@ -29,16 +29,19 @@ void main() {
       expect(r.memory!.text.length, lessThanOrEqualTo(20));
     });
 
-    test('related writes are labile and reactivate the neighbour', () async {
+    test('a write that reactivates the past is born labile', () async {
       final (memory, _, _) = await build();
       final old = (await memory.remember('cat dog bird fish')).memory!;
-      expect(old.consolidated, isTrue);
+      expect(old.consolidated, isTrue, reason: 'nothing to reactivate');
       final r = await memory.remember('cat dog bird fish!');
       expect(r.cosine, greaterThan(0.9));
       expect(r.memory!.consolidated, isFalse);
-      expect((await memory.memory(old.id))!.consolidated, isFalse,
-          reason: 'reconsolidation: the old trace becomes labile');
+      expect((await memory.memory(old.id))!.consolidated, isTrue,
+          reason: 'the old trace is a candidate, not rewritten on the way in');
       expect((await memory.memories()).length, 2, reason: 'never overwritten');
+      final cluster = (await memory.clusters()).single;
+      expect(cluster.first.id, r.memory!.id, reason: 'newest evidence seeds');
+      expect(cluster.last.id, old.id);
     });
 
     test('salience scales and clamps initial stability', () async {

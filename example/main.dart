@@ -64,12 +64,18 @@ Future<void> main() async {
     print('${r.action.name}: ${r.memory?.text} (id=${r.memory?.id})');
   }
 
-  // Explicit Unix time, timezone and salience for an important backdated fact:
+  // Explicit Unix time, timezone and salience for an important dated plan
+  // (1774000000 = 2026-03-20 09:46 UTC, so 2026-04-01 is still ahead).
+  // The offset must be the one in force *at that instant*: Berlin is +01:00
+  // until the DST switch on 2026-03-29, not +02:00. In real code derive it
+  // instead of hardcoding, e.g.
+  // `DateTime.fromMillisecondsSinceEpoch(nowUnix * 1000).timeZoneOffset`
+  // for the device zone, or package:timezone for another zone's DST history.
   await memory.remember(
-    'ユーザーは2026-04-01にベルリンへ出張した',
+    'ユーザーは2026-04-01にベルリンへ出張する予定',
     salience: 3,
     nowUnix: 1774000000,
-    timezone: const MemoryTimezone('Europe/Berlin', Duration(hours: 2)),
+    timezone: const MemoryTimezone('Europe/Berlin', Duration(hours: 1)),
   );
 
   // -- RECALL: retrieve relevant memories for the next LLM prompt.
@@ -99,7 +105,12 @@ Future<void> main() async {
     adjudicate: (request) async {
       // Real apps: send request.buildPrompt() to an LLM in JSON mode and
       // return DreamDecision.parseJson(rawResponse).
-      return DreamDecision([request.members.map((m) => m.text).join(' / ')]);
+      // absorbedIds names the members this gist replaces; members left out
+      // survive verbatim, so omitting them would duplicate their content.
+      return DreamDecision(
+        [request.members.map((m) => m.text).join(' / ')],
+        absorbedIds: request.members.skip(1).map((m) => m.id).toList(),
+      );
     },
   );
   for (final r in reports) {

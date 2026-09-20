@@ -88,7 +88,9 @@ String formatLocal(int unixSeconds, String tzField) {
   final hour = secondsOfDay ~/ 3600;
   final minute = (secondsOfDay % 3600) ~/ 60;
   String two(int v) => v.toString().padLeft(2, '0');
-  final y = year.toString().padLeft(4, '0');
+  // Negative years pad like Python's f'{year:04d}' ('-002'), not '00-2'.
+  final y = (year < 0 ? '-' : '') +
+      year.abs().toString().padLeft(year < 0 ? 3 : 4, '0');
   return '$y-${two(month)}-${two(day)} ${two(hour)}:${two(minute)} '
       '${formatUtcOffset(offset)}';
 }
@@ -98,7 +100,10 @@ String formatLocal(int unixSeconds, String tzField) {
 /// Python reference so both languages format identically.
 (int, int, int) ymdFromOrdinal(int ordinal) {
   var n = ordinal - 1;
-  final n400 = n ~/ 146097;
+  // Floor division, not `~/`: ordinals below 1 (pre-0001-CE instants) are
+  // negative here and must floor like Python's divmod. `%` already floors in
+  // Dart, so after this line n is non-negative and `~/` is safe below.
+  final n400 = (n / 146097).floor();
   n %= 146097;
   var n100 = n ~/ 36524;
   n %= 36524;

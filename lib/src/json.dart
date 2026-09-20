@@ -30,10 +30,12 @@ Object? relaxedJsonDecode(String? text) {
 /// `{text: ...}` objects; anything else yields an empty list.
 List<String> jsonTexts(Object? list) {
   if (list is! List) return const [];
-  return [
-    for (final item in list)
-      if (_text(item).isNotEmpty) _text(item),
-  ];
+  final out = <String>[];
+  for (final item in list) {
+    final text = _text(item);
+    if (text.isNotEmpty) out.add(text);
+  }
+  return out;
 }
 
 String _text(Object? item) =>

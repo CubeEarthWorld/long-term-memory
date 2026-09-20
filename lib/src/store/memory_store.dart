@@ -20,7 +20,10 @@ abstract class MemoryStore {
   /// Releases resources.
   Future<void> close() async {}
 
-  /// Returns every stored trace (called once at start-up).
+  /// Returns every stored trace (called once at start-up), in insertion
+  /// order — the engine tie-breaks its dream seeds and recall candidates on
+  /// it, so a store that reorders on rewrite changes behaviour after a
+  /// restart. Ordering by id works: ULIDs are lexicographically time-ordered.
   Future<List<Memory>> loadAll();
 
   /// Inserts or replaces the row with `memory.id`.

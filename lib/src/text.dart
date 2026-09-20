@@ -1,30 +1,41 @@
 /// Text helpers shared by the write and dream paths.
 library;
 
+/// The whitespace class, spelled out so it is identical to Python's `\s`:
+/// Dart's `\s` omits U+001C-U+001F and U+0085, Python's omits U+FEFF.
+const String whitespaceClass = r'[\s-﻿]';
+
 /// Normalises a proposition for storage: strips the pack delimiters `《》`
 /// (so a stored text can never spoof an injected id), collapses whitespace
 /// and newlines to single spaces, trims, then shortens to [maxChars].
 String cleanText(String text, int maxChars) => shorten(
       text
           .replaceAll(RegExp('[《》]'), '')
-          .replaceAll(RegExp(r'\s+'), ' ')
+          .replaceAll(RegExp('$whitespaceClass+'), ' ')
           .trim(),
       maxChars,
-    );
+    ).trim();   // a boundary cut keeps its separator, which may be a space
 
 /// Truncates [text] to at most [maxChars], preferring a sentence/clause
 /// boundary in the second half of the cut.
+///
+/// Counts code points, not UTF-16 code units, so the limit means the same
+/// thing as Python's `len()` and a cut can never split a surrogate pair.
 String shorten(String text, int maxChars) {
-  if (text.length <= maxChars) return text;
-  final cut = text.substring(0, maxChars);
+  final runes = text.runes.toList();
+  if (runes.length <= maxChars) return text;
+  final cut = runes.sublist(0, maxChars);
   for (final sep in const ['。', '．', '.', '、', ' ']) {
-    final idx = cut.lastIndexOf(sep);
-    if (idx > maxChars * 0.5) return cut.substring(0, idx + 1);
+    final idx = cut.lastIndexOf(sep.codeUnitAt(0));
+    if (idx > maxChars * 0.5) {
+      return String.fromCharCodes(cut.sublist(0, idx + 1));
+    }
   }
-  return cut;
+  return String.fromCharCodes(cut);
 }
 
-final RegExp _cueBreak = RegExp(r'\n+|(?<=[。！？])|(?<=[.!?])\s+');
+final RegExp _cueBreak =
+    RegExp('\\n+|(?<=[。！？])|(?<=[.!?])$whitespaceClass+');
 
 /// Splits a query into cues (lines, then sentences) so a trace relevant to
 /// any part of a long multi-topic turn can surface. More than [maxCues]

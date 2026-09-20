@@ -71,8 +71,7 @@ class EngramMemory {
 
   /// Current local datetime string (e.g. `'2026-06-12 09:30 +09:00'`) — the
   /// format expected by the bundled prompt templates.
-  String nowLocal({int? nowUnix, MemoryTimezone? timezone}) => formatLocal(
-      nowUnix ?? this.nowUnix(), (timezone ?? _defaultTz).storageField);
+  String nowLocal() => formatLocal(nowUnix(), _defaultTz.storageField);
 
   // ================================================================== //
   // the forgetting curve (SPEC §3)
@@ -98,8 +97,10 @@ class EngramMemory {
   double _elapsed(Memory m, int now) =>
       math.max(0, now - m.lastRecall).toDouble();
 
+  // NaN would survive min/max and then never compare below weakestRank,
+  // i.e. an immortal trace (SPEC §7 forbids one).
   double _clampStability(double s) =>
-      math.min(math.max(s, 1.0), config.maxStability);
+      math.min(math.max(s.isNaN ? 1.0 : s, 1.0), config.maxStability);
 
   /// The retrieval update: stability grows with the spacing achieved
   /// (`1 − R`) and the cue activation [a]; `lastRecall` moves to [now].
@@ -158,21 +159,21 @@ class EngramMemory {
     }
   }
 
-  Iterable<Memory> get _indexed =>
-      _traces.values.where((m) => m.modelId == embedder.modelId);
+  bool _isIndexed(Memory m) => m.modelId == embedder.modelId;
 
-  List<Memory> get _stale => _traces.values
-      .where((m) => m.modelId != embedder.modelId)
-      .toList(growable: false);
+  Iterable<Memory> get _indexed => _traces.values.where(_isIndexed);
 
-  bool get _anyStale =>
-      _traces.values.any((m) => m.modelId != embedder.modelId);
+  List<Memory> get _stale =>
+      _traces.values.where((m) => !_isIndexed(m)).toList(growable: false);
+
+  bool get _anyStale => _traces.values.any((m) => !_isIndexed(m));
 
   /// Erases everything.
   Future<void> reset() => _serialize(() async {
         await store.clear();
         _traces.clear();
         _writeTimes.clear();
+        _lastRecall.clear();
       });
 
   /// All traces (a snapshot, in insertion order).
@@ -194,12 +195,14 @@ class EngramMemory {
   Future<RememberResult> remember(
     String text, {
     double salience = 1.0,
+    String cue = '',
     int? nowUnix,
     MemoryTimezone? timezone,
   }) =>
       _serialize(() async {
         final now = nowUnix ?? this.nowUnix();
         text = cleanText(text, config.textMax);
+        cue = cleanText(cue, config.textMax);
         if (text.isEmpty) return const RememberResult(RememberAction.rejected);
         for (final m in _traces.values) {
           if (m.text == text) {
@@ -220,38 +223,26 @@ class EngramMemory {
         } catch (_) {
           v = null; // embedder offline: keep the text, index it later
         }
-        var best = 0.0;
-        Memory? nearest;
-        if (v != null) {
-          for (final m in _indexed) {
-            final c = dot(m.vector, v);
-            if (c > best) {
-              best = c;
-              nearest = m;
-            }
-          }
-        }
-        final related = best >= config.thetaRelated;
+        final q = v == null ? null : await _cueVector(cue, v);
+        final candidates = q == null ? const <Memory>[] : _candidates(q, null);
+        final best = candidates.isEmpty ? 0.0 : dot(candidates.first.vector, q!);
         final m = Memory(
           id: ulid(now * 1000),
           text: text,
           createdAt: now,
           tz: (timezone ?? _defaultTz).storageField,
           lastRecall: now,
-          stability: _clampStability(
-              config.initialStability * salience.clamp(0.0, 10.0)),
-          consolidated: v != null && !related && !_anyStale,
+          // clamp() orders NaN above every double, so NaN would read as 10.
+          stability: _clampStability(config.initialStability *
+              (salience.isNaN ? 1.0 : salience.clamp(0.0, 10.0))),
+          consolidated: v != null && candidates.isEmpty && !_anyStale,
           modelId: v == null ? '' : embedder.modelId,
           vector: v ?? Float32List(0),
+          cue: cue,
         );
         // One operation = one commit.
         final evicted = await store.transaction(() async {
           await _put(m);
-          if (related && nearest!.consolidated) {
-            // Reconsolidation: the reactivated old trace becomes labile too,
-            // so the pair is adjudicated at the old trace's (higher) priority.
-            await _put(nearest.copyWith(consolidated: false));
-          }
           return _enforceCapacity(now);
         });
         return RememberResult(RememberAction.inserted,
@@ -268,7 +259,8 @@ class EngramMemory {
         _lastRecall
             .clear(); // a recall always ends the previous citation window
         final parts = cues(query, config.maxCues);
-        if (parts.isEmpty || _traces.isEmpty) return RecallResult.empty;
+        // Nothing indexed = nothing to score, so do not pay for an embedding.
+        if (parts.isEmpty || _indexed.isEmpty) return RecallResult.empty;
         List<Float32List> qs;
         try {
           qs = [
@@ -291,8 +283,15 @@ class EngramMemory {
           scored.add(Recalled(m, score: score, cosine: cos, retrievability: r));
         }
         final floor = math.max(config.minScore, config.relativeScore * top);
-        final pool = scored.where((c) => c.score >= floor).toList()
-          ..sort((a, b) => b.score.compareTo(a.score));
+        // List.sort is not stable above ~32 elements, so score ties are broken
+        // on insertion order explicitly — the one order both languages agree on.
+        final ranked = <(int, Recalled)>[
+          for (var i = 0; i < scored.length; i++)
+            if (scored[i].score >= floor) (i, scored[i]),
+        ]..sort((a, b) => a.$2.score == b.$2.score
+            ? a.$1.compareTo(b.$1)
+            : b.$2.score.compareTo(a.$2.score));
+        final pool = [for (final e in ranked) e.$2];
         final lines = <String>[];
         final packed = <Recalled>[];
         var used = 0;
@@ -301,11 +300,12 @@ class EngramMemory {
           for (final c in _mmr(pool)) {
             final m = c.memory;
             final line = '[${m.createdAt} ${m.tz}] ${m.text}　《id:${m.id}》\n';
-            if (lines.isNotEmpty && used + line.length > config.budgetChars) {
+            final cost = line.runes.length;   // code points, like Python's len()
+            if (lines.isNotEmpty && used + cost > config.budgetChars) {
               continue;
             }
             lines.add(line);
-            used += line.length;
+            used += cost;
             packed.add(c);
             _lastRecall[m.id] = c;
             await _put(_retrieved(m, now, 0.5 * _activation(c.cosine)));
@@ -423,34 +423,63 @@ class EngramMemory {
 
   /// The clusters the next dream would hand to the LLM (seed first),
   /// without calling it — for inspection UIs.
+  /// Clusters may overlap: a settled trace is a candidate for every later
+  /// piece of evidence.
   Future<List<List<Memory>>> clusters() => _serialize(() async {
         final out = <List<Memory>>[];
-        final taken = <String>{};
         for (final seed in _seeds) {
-          if (taken.contains(seed.id)) continue;
-          final cluster = _cluster(seed);
-          if (cluster.length < 2) continue;
-          out.add(cluster);
-          taken.addAll(cluster.map((m) => m.id));
+          final cluster = await _cluster(seed);
+          if (cluster.length >= 2) out.add(cluster);
         }
         return out;
       });
 
   /// Labile traces, most stable first: what carries the most accumulated
-  /// evidence is integrated first (a correction of an important fact is
-  /// seeded by that fact, ahead of fresh junk pairs).
-  List<Memory> get _seeds => _indexed.where((m) => !m.consolidated).toList()
-    ..sort((a, b) => b.stability.compareTo(a.stability));
-
-  List<Memory> _cluster(Memory seed) {
-    final near = <(double, Memory)>[
-      for (final m in _indexed)
-        if (m.id != seed.id)
-          for (final cos in [dot(m.vector, seed.vector)])
-            if (cos >= config.thetaRelated) (cos, m),
-    ]..sort((a, b) => b.$1.compareTo(a.$1));
-    return [seed, ...near.take(config.dreamMaxMembers - 1).map((e) => e.$2)];
+  /// evidence is integrated first. Ties break on insertion order, the one
+  /// order both languages agree on (ULID tails are random).
+  List<Memory> get _seeds {
+    final rows = _indexed.toList(growable: false);
+    final labile = <(int, Memory)>[
+      for (var i = 0; i < rows.length; i++)
+        if (!rows[i].consolidated) (i, rows[i]),
+    ]..sort((a, b) => b.$2.stability == a.$2.stability
+        ? a.$1.compareTo(b.$1)
+        : b.$2.stability.compareTo(a.$2.stability));
+    return [for (final e in labile) e.$2];
   }
+
+  /// The cue's query vector; the trace's own vector when it has no cue.
+  Future<Float32List> _cueVector(String cue, Float32List own) async {
+    if (cue.isEmpty) return own;
+    try {
+      return l2Normalized((await embedder.embedQueries([cue]))[0]);
+    } catch (_) {
+      return own; // embedder offline: fall back to the text
+    }
+  }
+
+  /// Traces the cue [q] reactivates, strongest first: cos >= thetaRelated and
+  /// not written after the seed, so evidence only ever rewrites its own past
+  /// (SPEC §5). Ties break on insertion order — ULID tails are random, so ids
+  /// would not agree across languages. At most dreamMaxMembers - 1.
+  List<Memory> _candidates(Float32List q, Memory? seed) {
+    final rows = _indexed.toList(growable: false);
+    final near = <(double, int)>[
+      for (var i = 0; i < rows.length; i++)
+        if (seed == null ||
+            (rows[i].id != seed.id && rows[i].createdAt <= seed.createdAt))
+          for (final cos in [dot(rows[i].vector, q)])
+            if (cos >= config.thetaRelated) (cos, i),
+    ]..sort((a, b) =>
+        a.$1 == b.$1 ? a.$2.compareTo(b.$2) : b.$1.compareTo(a.$1));
+    return [
+      for (final e in near.take(config.dreamMaxMembers - 1)) rows[e.$2],
+    ];
+  }
+
+  /// The seed (newest evidence) followed by the older traces its cue reactivates.
+  Future<List<Memory>> _cluster(Memory seed) async =>
+      [seed, ..._candidates(await _cueVector(seed.cue, seed.vector), seed)];
 
   /// Offline consolidation — the only place traces are rewritten. Runs:
   /// backup → re-index stale traces → up to [budget] LLM adjudications via
@@ -468,24 +497,20 @@ class EngramMemory {
         await _reindex();
         var left = budget ?? config.dreamBudget;
         final reports = <DreamReport>[];
-        final failed = <String>{}; // members of clusters whose LLM call threw
         for (final s in _seeds.take(_seedsPerBudget * math.max(left, 0))) {
           final seed = _traces[s.id];
-          if (seed == null || seed.consolidated || failed.contains(s.id)) {
+          if (seed == null || seed.consolidated) {
             continue;
           }
           if (left <= 0) break;
-          final cluster = _cluster(seed);
+          final cluster = await _cluster(seed);
           if (cluster.length < 2) {
             await _put(seed.copyWith(consolidated: true));
             continue;
           }
           left -= 1;
-          final report = await _adjudicate(adjudicate, cluster, now, tz);
-          if (report.action == DreamAction.error) {
-            failed.addAll(cluster.map((m) => m.id));
-          }
-          reports.add(report);
+          // An error leaves the seed labile for the next dream.
+          reports.add(await _adjudicate(adjudicate, cluster, now, tz));
         }
         return reports;
       });
@@ -510,9 +535,28 @@ class EngramMemory {
           ),
       ],
     );
-    DreamDecision decision;
+    // The embedder call inside _gists is as fallible as the LLM call, and both
+    // must leave the seed labile for the next dream rather than escape and
+    // discard the reports already collected.
+    List<Memory> absorbed;
+    List<Memory> gists;
     try {
-      decision = await Future.sync(() => adjudicate(request));
+      final decision = await Future.sync(() => adjudicate(request));
+      final texts = <String>[];
+      for (final t in decision.memories) {
+        final c = cleanText(t, config.textMax);
+        if (c.isNotEmpty && !texts.contains(c)) texts.add(c);
+      }
+      // The verdict names the older candidates the seed supersedes; the ones it
+      // does not name were merely offered and are left untouched.
+      final picked = decision.absorbedIds.toSet();
+      absorbed = [
+        cluster.first,
+        ...cluster.skip(1).where((m) => picked.contains(m.id)),
+      ];
+      gists = texts.length > absorbed.length
+          ? const <Memory>[]
+          : await _gists(texts, absorbed, now);
     } catch (e) {
       return DreamReport(
           action: DreamAction.error,
@@ -520,32 +564,20 @@ class EngramMemory {
           after: const [],
           error: '$e');
     }
-    final texts = <String>[];
-    for (final t in decision.memories) {
-      final c = cleanText(t, config.textMax);
-      if (c.isNotEmpty && !texts.contains(c)) texts.add(c);
-    }
-    final gists = texts.length > cluster.length
-        ? const <Memory>[]
-        : await _gists(texts, cluster, now, tz);
     if (gists.isEmpty) {
-      await store.transaction(() async {
-        for (final m in cluster) {
-          await _put(m.copyWith(consolidated: true));
-        }
-      });
+      await _put(cluster.first.copyWith(consolidated: true));
       return DreamReport(
           action: DreamAction.keep, before: cluster, after: const []);
     }
     await store.transaction(() async {
-      for (final m in cluster) {
+      for (final m in absorbed) {
         await store.remove(m.id);
       }
       for (final g in gists) {
         await store.put(g);
       }
     });
-    for (final m in cluster) {
+    for (final m in absorbed) {
       _traces.remove(m.id);
     }
     for (final g in gists) {
@@ -563,13 +595,13 @@ class EngramMemory {
   /// cluster's total strength (`R = Σ strength_i / S`, encoded back into
   /// `lastRecall`), so consolidation neither refreshes nor inflates.
   Future<List<Memory>> _gists(
-      List<String> texts, List<Memory> cluster, int now, String tz) async {
+      List<String> texts, List<Memory> cluster, int now) async {
     if (texts.isEmpty) return const [];
     final vectors = [
       for (final v in await embedder.embedDocuments(texts)) l2Normalized(v),
     ];
     for (final v in vectors) {
-      var best = 0.0;
+      var best = double.negativeInfinity;   // a true max, so gistMinCosine <= 0 still rejects
       for (final m in cluster) {
         best = math.max(best, dot(m.vector, v));
       }
@@ -587,18 +619,24 @@ class EngramMemory {
     // Half-lives already elapsed for the gist (64 ⇒ R underflows to 0).
     final elapsed = r > 0 ? math.min(64.0, -math.log(r) / math.ln2) : 64.0;
     final lastRecall = now - (stability * elapsed).round();
+    // The gist was stated when its newest member was, not when the dream ran,
+    // so a later update can still reach it as an older candidate.
+    // = the seed; candidates are no newer, and ties keep the first.
+    final newest =
+        cluster.reduce((a, b) => b.createdAt > a.createdAt ? b : a);
     return [
       for (var i = 0; i < texts.length; i++)
         Memory(
           id: ulid(now * 1000),
           text: texts[i],
-          createdAt: now,
-          tz: tz,
+          createdAt: newest.createdAt,
+          tz: newest.tz,
           lastRecall: lastRecall,
           stability: stability,
           consolidated: true,
           modelId: embedder.modelId,
           vector: vectors[i],
+          cue: newest.cue,
         ),
     ];
   }

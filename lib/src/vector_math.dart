@@ -21,10 +21,17 @@ Float32List l2Normalized(List<double> v) {
 }
 
 /// Dot product (== cosine for unit-norm inputs).
+///
+/// Throws when the lengths differ: one `modelId` must mean one dimension, and a
+/// truncated dot product would silently return a cosine no threshold can mean
+/// (Python raises here too).
 double dot(Float32List a, Float32List b) {
-  final n = min(a.length, b.length);
+  if (a.length != b.length) {
+    throw ArgumentError('vector dimension mismatch: ${a.length} vs ${b.length} — '
+        'change modelId when the dimension changes, so traces are re-embedded');
+  }
   var sum = 0.0;
-  for (var i = 0; i < n; i++) {
+  for (var i = 0; i < a.length; i++) {
     sum += a[i] * b[i];
   }
   return sum;

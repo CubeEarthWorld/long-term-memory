@@ -20,11 +20,11 @@ a        = max(0, (cos − cosineFloor) / (1 − cosineFloor))     手がかり�
 
 | 動詞 | 動作 |
 |---|---|
-| `remember(text, salience:)` | 同一テキストはリハーサル。それ以外は挿入し、**決して上書きしない**。近傍（cos ≥ θ_related）がある痕跡は*不安定*に生まれ、その近傍も不安定化する（再固定化）。容量超過時は猶予期間（3 日）外で strength 最小の痕跡を忘却。 |
+| `remember(text, salience:, cue:)` | 同一テキストはリハーサル。それ以外は挿入し、**決して上書きしない**。`cue` が近傍（cos ≥ θ_related）に届く痕跡は*不安定*に生まれる。既存の痕跡には一切手を触れない。容量超過時は猶予期間（3 日）外で strength 最小の痕跡を忘却。 |
 | `recall(query)` | 複数手がかりのコサイン → `score = a·(α + (1−α)·R)` → 絶対・相対閾値 → MMR → `[unix tz] text 《id》` を ≤1024 字で注入。注入は「露出」なので半分だけ強化。 |
 | `cite(reply)` | LLM が引用した《id》の記憶を「使用」として完全に強化。 |
 | `forget(id)` | id 指定の物理削除。 |
-| `dream(adjudicate:)` | 不安定な痕跡（安定度順）を種に cos ≥ θ_related の近傍クラスタ（≤8）を作り、あなたの LLM が **keep** か **replace [texts]** を判定。要旨は最強成員の安定度＋他の「生きた証拠」を継承。無関係な出力は作話として拒否。整理済みのストアでは LLM を呼ばない。 |
+| `dream(adjudicate:)` | 不安定な痕跡（安定度順）を種に、その `cue` が再活性化した**より古い**痕跡のクラスタ（cos ≥ θ_related、≤8）を作り、あなたの LLM が **keep** か **replace**（更新される古い記憶の id ＋ 要旨テキスト）を判定。要旨は最強成員の安定度＋他の「生きた証拠」を継承。無関係な出力は作話として拒否。整理済みのストアでは LLM を呼ばない。 |
 
 全状態が有界なので演算コストは経過時間に依存しません。3000 仮想年のシミュレーション（数十万回の書込み・10 年の沈黙・時計故障）がテストに含まれています。
 
@@ -38,12 +38,15 @@ final memory = EngramMemory(
 );
 await memory.initialize();
 
-await memory.remember('ユーザーは京都に住んでいる', salience: 2);   // 書込み
+// cue は「この事実が後に問われるであろう質問文」。夢フェーズはこの cue で過去を検索するため、
+// 更新と被更新が字面として遠くても、更新は自分が置き換えるべき版に到達できる。
+await memory.remember('ユーザーは京都に住んでいる',
+    salience: 2, cue: 'ユーザーは今どこに住んでいるか？');           // 書込み
 final recall = await memory.recall('どこに住んでいるか覚えてる？');  // 想起 → recall.packText
 await memory.cite(llmReply);                                          // 応答が引用した《id》を強化
 await memory.dream(adjudicate: (request) async {                      // 夢（オフライン統合）
   final raw = await myLlm.generateJson(request.buildPrompt());
-  return DreamDecision.parseJson(raw);   // {"action":"keep"} または {"action":"replace","memories":[...]}
+  return DreamDecision.parseJson(raw);   // {"action":"keep"} または {"action":"replace","ids":[...],"memories":[...]}
 });
 ```
 
@@ -54,7 +57,7 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 ```
 発話 ─► memory.recall(発話) → 記憶パック
      ─► LLM 呼び出し（EngramPrompts.conversationSystemPromptJa / buildUserMessage / saveMemoryToolSpec, deleteMemoryToolSpec）
-     ─► save_memory → memory.remember(text, salience:)   delete_memory → memory.forget(id)
+     ─► save_memory → memory.remember(text, salience:, cue:)   delete_memory → memory.forget(id)
      ─► memory.cite(応答)
 ```
 
@@ -64,7 +67,7 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 
 - **`Embedder`** — `modelId` / `embedQueries` / `embedDocuments`。正規化は不要。埋め込みが失敗しても `remember` は本文を保持し（後で索引化）、`recall` は空を返し、`dream` は可能な範囲で再索引します。モデル依存の 3 パラメータ（`cosineFloor`≈EmbeddingGemma で 0.4、`thetaRelated`、`gistMinCosine`）は一度較正してください。
 - **`MemoryStore`** — `loadAll / put / remove / clear / transaction / backup`（＋ open/close）の 6 操作。全件は RAM に保持され（1 万件 × 768 次元で約 35 MB）、ストアは永続化のみ。`InMemoryStore` 同梱、SQLite アダプタ（WAL・トランザクション・スナップショットリング）は [`example/sqlite_adapter`](example/sqlite_adapter)。
-- **`DreamAdjudicator`** — `DreamRequest` を受けて `DreamDecision` を返すコールバック。本文の清浄化・1 裁定 ≤ 8 行・成員数を超える置換の拒否・成員とのコサイン検査（作話ガード）・強度保存の継承・1 クラスタ = 1 トランザクション・失敗クラスタの再試行はエンジンが保証します。
+- **`DreamAdjudicator`** — `DreamRequest` を受けて `DreamDecision` を返すコールバック。`DreamDecision.parseJson` は寛容に解析しますが、空・解析不能な応答（`memories` フィールドの欠落や型違いも含む）では `FormatException` を投げます。沈黙を「keep」と読まないためで（打ち切られた推論モデルが痕跡を恒久的に固定化してしまう）、そのクラスタは不安定なまま次の夢で再試行されます（自分で判断したい場合は `null` を返す `DreamDecision.parse` を使ってください）。本文の清浄化・1 裁定 ≤ 8 行・成員数を超える置換の拒否・成員とのコサイン検査（作話ガード）・強度保存の継承・1 クラスタ = 1 トランザクション・失敗クラスタの再試行はエンジンが保証します。
 
 ## 時刻とタイムゾーン
 
@@ -75,7 +78,7 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 | メソッド | 目的 |
 |---|---|
 | `initialize()` | ストアを開き、全件を読込・クランプし、古いモデルのベクトルを再埋め込み |
-| `remember(text, {salience, nowUnix, timezone})` | → `RememberResult`（`inserted` / `reinforced` / `rejected` / `rateLimited`、`evicted`） |
+| `remember(text, {salience, cue, nowUnix, timezone})` | → `RememberResult`（`inserted` / `reinforced` / `rejected` / `rateLimited`、`evicted`） |
 | `recall(query, {nowUnix})` | → `RecallResult(packText, recalled)` |
 | `cite(replyText)` | 応答が引用した《id》の記憶を完全に強化 |
 | `forget(id)` | id 指定の物理削除 → `bool` |
@@ -85,7 +88,7 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 
 ## 設定（`EngramConfig`、19 個）
 
-`capacity` 10000 / `initialStability` 1 日 / `spacingGain` 3 / `maxStability` 10 年 / `gracePeriod` 3 日 / `cosineFloor` 0 / `alpha` 0.35 / `injectN` 5 / `mmrLambda` 0.3 / `minScore` 0.1 / `relativeScore` 0.6 / `budgetChars` 1024 / `maxCues` 8 / `thetaRelated` 0.75 / `dreamBudget` 5 / `dreamMaxMembers` 8 / `gistMinCosine` 0.5 / `textMax` 170 / `writesPerDay` 1000。意味は SPEC §6 を参照。
+`capacity` 10000 / `initialStability` 1 日 / `spacingGain` 3 / `maxStability` 10 年 / `gracePeriod` 3 日 / `cosineFloor` 0（モデル非依存の既定値。Python 版は EmbeddingGemma 向けに較正済みの 0.4 を採用）/ `alpha` 0.35 / `injectN` 5 / `mmrLambda` 0.3 / `minScore` 0.1 / `relativeScore` 0.6 / `budgetChars` 1024 / `maxCues` 8 / `thetaRelated` 0.55 / `dreamBudget` 5 / `dreamMaxMembers` 8 / `gistMinCosine` 0.5 / `textMax` 170（Python の `len()` と同じくコードポイント数）/ `writesPerDay` 1000。意味は SPEC §6 を参照。
 
 ## テスト
 

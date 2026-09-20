@@ -19,6 +19,7 @@ class Memory {
     required this.consolidated,
     required this.modelId,
     required this.vector,
+    this.cue = '',
   });
 
   /// ULID-shaped id (50-bit ms timestamp prefix; lexicographic = time order).
@@ -48,11 +49,15 @@ class Memory {
   /// Unit-norm document embedding.
   final Float32List vector;
 
-  /// Copy with changed fields.
+  /// The question this fact answers - what the dream searches the past with
+  /// so an update reaches the version it supersedes ('' = use [text]).
+  final String cue;
+
+  /// Copy with changed fields. [text], [tz] and [cue] are deliberately not
+  /// copyable: a trace's content is never rewritten in place (SPEC §7) — the
+  /// dream inserts a new trace instead.
   Memory copyWith({
-    String? text,
     int? createdAt,
-    String? tz,
     int? lastRecall,
     double? stability,
     bool? consolidated,
@@ -61,14 +66,15 @@ class Memory {
   }) =>
       Memory(
         id: id,
-        text: text ?? this.text,
+        text: text,
         createdAt: createdAt ?? this.createdAt,
-        tz: tz ?? this.tz,
+        tz: tz,
         lastRecall: lastRecall ?? this.lastRecall,
         stability: stability ?? this.stability,
         consolidated: consolidated ?? this.consolidated,
         modelId: modelId ?? this.modelId,
         vector: vector ?? this.vector,
+        cue: cue,
       );
 
   /// JSON form (vector base64-encoded little-endian float32).
@@ -82,6 +88,7 @@ class Memory {
         'consolidated': consolidated,
         'modelId': modelId,
         'vector': base64Encode(packF32(vector)),
+        'cue': cue,
       };
 
   /// Inverse of [toJson].
@@ -95,6 +102,7 @@ class Memory {
         consolidated: json['consolidated'] as bool? ?? false,
         modelId: json['modelId'] as String,
         vector: unpackF32(base64Decode(json['vector'] as String)),
+        cue: json['cue'] as String? ?? '',
       );
 
   @override

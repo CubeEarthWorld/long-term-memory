@@ -37,21 +37,23 @@ void main() {
     final memory = await seeded();
     final before = {for (final m in await memory.memories()) m.id: m};
     final reports = await memory.dream(adjudicate: alwaysKeep);
-    expect(reports.single.action, DreamAction.keep);
+    expect(reports.first.action, DreamAction.keep);
+    expect(reports.every((r) => r.action == DreamAction.keep), isTrue);
     for (final m in await memory.memories()) {
-      expect(m.consolidated, isTrue);
+      expect(m.consolidated, isTrue, reason: 'every seed settled');
       expect(m.stability, before[m.id]!.stability);
       expect(m.lastRecall, before[m.id]!.lastRecall);
     }
+    expect(await memory.dream(adjudicate: alwaysKeep), isEmpty);
   });
 
   test('a throwing adjudicator leaves the cluster labile for retry', () async {
     final memory = await seeded();
     final reports =
         await memory.dream(adjudicate: (_) => throw StateError('llm down'));
-    expect(reports.single.action, DreamAction.error);
-    expect((await memory.clusters()).length, 1);
-    expect((await memory.dream(adjudicate: mergeToGist)).single.action,
+    expect(reports.first.action, DreamAction.error);
+    expect((await memory.clusters()), isNotEmpty);
+    expect((await memory.dream(adjudicate: mergeToGist)).first.action,
         DreamAction.replace);
   });
 
@@ -60,13 +62,15 @@ void main() {
     final r1 = await memory.dream(
         adjudicate: (_) =>
             const DreamDecision(['zzz qqq unrelated hallucination']));
-    expect(r1.single.action, DreamAction.keep);
+    expect(r1.first.action, DreamAction.keep);
     final memory2 = await seeded();
+    // Names every candidate, so `absorbed` is the whole cluster and the gist
+    // count is the only thing left to reject the verdict.
     final r2 = await memory2.dream(
         adjudicate: (req) => DreamDecision([
               for (var i = 0; i < req.members.length + 1; i++) 'trip kyoto $i',
-            ]));
-    expect(r2.single.action, DreamAction.keep);
+            ], absorbedIds: [for (final m in req.members.skip(1)) m.id]));
+    expect(r2.first.action, DreamAction.keep);
   });
 
   test('budget bounds LLM calls; strongest seeds first', () async {
@@ -81,21 +85,64 @@ void main() {
     expect((await memory.clusters()).length, 1);
   });
 
-  test('a correction is adjudicated with the old fact in view', () async {
+  test('a correction is seeded by the new evidence, with the old fact in view',
+      () async {
     final (memory, clock, _) = await build();
     final old = (await memory.remember('user lives in tokyo city', salience: 5))
         .memory!;
     clock.advanceDays(30);
-    await memory.remember('user lives in osaka city');
+    final fresh =
+        (await memory.remember('user lives in osaka city')).memory!;
     DreamRequest? seen;
     await memory.dream(adjudicate: (req) {
       seen = req;
       return const DreamDecision.keep();
     });
-    expect(seen!.members.first.id, old.id, reason: 'old strong trace seeds');
+    expect(seen!.members.first.id, fresh.id,
+        reason: 'the newest evidence seeds');
+    expect(seen!.members.map((m) => m.id), contains(old.id));
     expect(
-        seen!.members.map((m) => m.text), contains('user lives in osaka city'));
-    expect(seen!.members.first.localTime, formatLocal(old.createdAt, old.tz));
+        seen!.members.first.localTime, formatLocal(fresh.createdAt, fresh.tz));
+    expect((await memory.memory(old.id))!.consolidated, isTrue,
+        reason: 'a candidate that was only offered is untouched');
+  });
+
+  test('only the named candidates are absorbed', () async {
+    final (memory, clock, _) = await build();
+    await memory.remember('user lives in tokyo city');
+    final bystander =
+        (await memory.remember('user lives in tokyo city with a cat')).memory!;
+    clock.advanceDays(30);
+    await memory.remember('user lives in osaka city');
+    final reports = await memory.dream(
+        adjudicate: (req) => req.members.first.text != 'user lives in osaka city'
+            ? const DreamDecision.keep()
+            : DreamDecision(['user moved to osaka city'], absorbedIds: [
+                for (final m in req.members.skip(1))
+                  if (m.text == 'user lives in tokyo city') m.id,
+              ]));
+    expect(reports.map((r) => r.action), contains(DreamAction.replace));
+    expect(await memory.memory(bystander.id), isNotNull,
+        reason: 'not named ⇒ not rewritten');
+    final texts = [for (final m in await memory.memories()) m.text];
+    expect(texts, contains('user moved to osaka city'));
+    expect(texts, isNot(contains('user lives in tokyo city')));
+  });
+
+  test('a cue reaches the version the update supersedes', () async {
+    final (memory, clock, _) = await build();
+    await memory.remember('user lives in tokyo city');
+    clock.advanceDays(30);
+    // Text far from the old fact (cos ≈ -0.11 < thetaRelated); only the cue
+    // reaches back to it (cos ≈ 0.90).
+    await memory.remember('resident of osaka prefecture now',
+        cue: 'user lives in city');
+    final clusters = await memory.clusters();
+    expect(clusters, hasLength(1));
+    expect(clusters.single.map((m) => m.text).toSet(), {
+      'user lives in tokyo city',
+      'resident of osaka prefecture now',
+    });
   });
 
   test('model switch re-embeds from text at start-up', () async {
@@ -119,7 +166,7 @@ void main() {
     expect((await b.memories()).single.modelId, 'fake/token-overlap');
   });
 
-  test('DreamDecision.parseJson is lenient', () {
+  test('DreamDecision parsing is lenient but never reads silence as keep', () {
     expect(DreamDecision.parseJson('```json\n{"action":"keep"}\n```').isKeep,
         isTrue);
     expect(
@@ -127,8 +174,17 @@ void main() {
                 'x {"action":"replace","memories":["a",{"text":"b"},""]} y')
             .memories,
         ['a', 'b']);
-    expect(DreamDecision.parseJson('garbage').isKeep, isTrue);
-    expect(DreamDecision.parseJson(null).isKeep, isTrue);
+    // SPEC §5: an unparsable verdict must retry, never settle the trace.
+    expect(() => DreamDecision.parseJson('garbage'), throwsFormatException);
+    expect(() => DreamDecision.parseJson(null), throwsFormatException);
+    expect(DreamDecision.parse('garbage'), isNull);
+    expect(DreamDecision.parse(null), isNull);
+    // A missing or mistyped `memories` is a broken answer, not an empty one.
+    expect(DreamDecision.parse('{"action":"replace","ids":["x"]}'), isNull);
+    expect(DreamDecision.parse('{"action":"replace","memories":"a string"}'),
+        isNull);
+    expect(DreamDecision.parse('{"action":"replace","memories":[]}')!.isKeep,
+        isTrue);
     expect(EngramPrompts.parseExtractedTexts('{"memories":["a"," ","b"]}'),
         ['a', 'b']);
   });

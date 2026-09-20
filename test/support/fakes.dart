@@ -107,8 +107,10 @@ class BrokenEmbedder implements Embedder {
 }
 
 /// Adjudicator that merges the cluster into one gist (texts joined).
-DreamDecision mergeToGist(DreamRequest request) =>
-    DreamDecision([request.members.map((m) => m.text).join(' / ')]);
+DreamDecision mergeToGist(DreamRequest request) => DreamDecision(
+      [request.members.map((m) => m.text).join(' / ')],
+      absorbedIds: [for (final m in request.members.skip(1)) m.id],
+    );
 
 /// Adjudicator that always answers "keep".
 DreamDecision alwaysKeep(DreamRequest request) => const DreamDecision.keep();
