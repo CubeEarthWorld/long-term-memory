@@ -65,7 +65,7 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 
 ## 3 つのインタフェース
 
-- **`Embedder`** — `modelId` / `embedQueries` / `embedDocuments`。正規化は不要。埋め込みが失敗しても `remember` は本文を保持し（後で索引化）、`recall` は空を返し、`dream` は可能な範囲で再索引します。モデル依存の 3 パラメータ（`cosineFloor`≈EmbeddingGemma で 0.4、`thetaRelated`、`gistMinCosine`）は一度較正してください。
+- **`Embedder`** — `modelId` / `dimension` / `embedQueries` / `embedDocuments`。正規化は不要。埋め込みが失敗しても `remember` は本文を保持し（後で索引化）、`recall` は空を返し、`dream` は可能な範囲で再索引します。1 つの `modelId` は 1 つの次元を意味し、`dimension` と長さの違うベクトル（`modelId` を変えずにモデルを差し替えた、あるいは 1 回だけ異常な長さが返った場合）は比較せず、陳腐として再埋め込みされます。モデル依存の 3 パラメータ（`cosineFloor`≈EmbeddingGemma で 0.4、`thetaRelated`、`gistMinCosine`）は一度較正してください。
 - **`MemoryStore`** — `loadAll / put / remove / clear / transaction / backup`（＋ open/close）の 6 操作。全件は RAM に保持され（1 万件 × 768 次元で約 35 MB）、ストアは永続化のみ。`InMemoryStore` 同梱、SQLite アダプタ（WAL・トランザクション・スナップショットリング）は [`example/sqlite_adapter`](example/sqlite_adapter)。
 - **`DreamAdjudicator`** — `DreamRequest` を受けて `DreamDecision` を返すコールバック。`DreamDecision.parseJson` は寛容に解析しますが、空・解析不能な応答（`memories` フィールドの欠落や型違いも含む）では `FormatException` を投げます。沈黙を「keep」と読まないためで（打ち切られた推論モデルが痕跡を恒久的に固定化してしまう）、そのクラスタは不安定なまま次の夢で再試行されます（自分で判断したい場合は `null` を返す `DreamDecision.parse` を使ってください）。本文の清浄化・1 裁定 ≤ 8 行・成員数を超える置換の拒否・成員とのコサイン検査（作話ガード）・強度保存の継承・1 クラスタ = 1 トランザクション・失敗クラスタの再試行はエンジンが保証します。
 

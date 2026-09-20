@@ -83,4 +83,27 @@ void main() {
     expect(m.vector, [1, 0]);
     expect(m.consolidated, isTrue);
   });
+
+  test('fromJson skips an unreadable row but keeps the rest', () async {
+    final s = InMemoryStore();
+    await s.put(Memory(
+      id: 'a',
+      text: 't',
+      createdAt: 1,
+      tz: 'UTC;+00:00',
+      lastRecall: 1,
+      stability: 2,
+      consolidated: true,
+      modelId: 'm',
+      vector: Float32List.fromList([1, 0]),
+    ));
+    final json = s.toJson();
+    final rows = (json['memories'] as List).toList()
+      ..add({'id': 'bad', 'vector': 42}); // not a memory at all
+    final copy = InMemoryStore.fromJson({'memories': rows});
+    expect((await copy.loadAll()).map((m) => m.id), ['a']);
+    // A payload that is not a list of memories still fails loudly.
+    expect(() => InMemoryStore.fromJson({'memories': 'nope'}),
+        throwsFormatException);
+  });
 }

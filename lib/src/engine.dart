@@ -55,6 +55,16 @@ class EngramMemory {
   final Map<String, Recalled> _lastRecall = {};
   Future<void> _chain = Future<void>.value();
 
+  /// An L2-normalised freshly embedded vector, or `null` when the embedder
+  /// contradicted its own [Embedder.dimension]. A wrong-length vector is an
+  /// embedder fault, not data: returning null routes it through the same path
+  /// as an offline embedder, so the trace is indexed on a later attempt
+  /// instead of reaching [dot], which throws.
+  Float32List? _vector(List<double> v) {
+    final out = l2Normalized(v);
+    return out.length == embedder.dimension ? out : null;
+  }
+
   Future<T> _serialize<T>(Future<T> Function() action) {
     final run = _chain.then((_) => action());
     _chain = run.then<void>((_) {}, onError: (Object _) {});
@@ -121,6 +131,10 @@ class EngramMemory {
         final now = nowUnix();
         _traces.clear();
         for (final raw in await store.loadAll()) {
+          // Every row is validated (SPEC §2). A store can hand back a row an
+          // older version or a hand-edited database wrote; an unusable one is
+          // skipped rather than allowed to break search for the whole store.
+          if (raw.id.isEmpty || raw.text.isEmpty) continue;
           final m = raw.copyWith(
             stability: _clampStability(raw.stability),
             lastRecall: math.min(raw.lastRecall, now),
@@ -152,14 +166,20 @@ class EngramMemory {
       }
       await store.transaction(() async {
         for (var j = 0; j < batch.length; j++) {
-          await _put(batch[j].copyWith(
-              modelId: embedder.modelId, vector: l2Normalized(vectors[j])));
+          final v = _vector(vectors[j]);
+          if (v == null) continue; // stays stale, retried later
+          await _put(batch[j].copyWith(modelId: embedder.modelId, vector: v));
         }
       });
     }
   }
 
-  bool _isIndexed(Memory m) => m.modelId == embedder.modelId;
+  /// Whether the current embedder can score this trace. One `modelId` means one
+  /// dimension (SPEC §7), so a vector of any other length — a provider glitch,
+  /// or a model file swapped behind an unchanged `modelId` — counts as stale and
+  /// is re-embedded by the next [_reindex] instead of reaching [dot].
+  bool _isIndexed(Memory m) =>
+      m.modelId == embedder.modelId && m.vector.length == embedder.dimension;
 
   Iterable<Memory> get _indexed => _traces.values.where(_isIndexed);
 
@@ -219,13 +239,14 @@ class EngramMemory {
         _writeTimes.add(now);
         Float32List? v;
         try {
-          v = l2Normalized((await embedder.embedDocuments([text]))[0]);
+          v = _vector((await embedder.embedDocuments([text]))[0]);
         } catch (_) {
           v = null; // embedder offline: keep the text, index it later
         }
         final q = v == null ? null : await _cueVector(cue, v);
         final candidates = q == null ? const <Memory>[] : _candidates(q, null);
-        final best = candidates.isEmpty ? 0.0 : dot(candidates.first.vector, q!);
+        final best =
+            candidates.isEmpty ? 0.0 : dot(candidates.first.vector, q!);
         final m = Memory(
           id: ulid(now * 1000),
           text: text,
@@ -264,11 +285,13 @@ class EngramMemory {
         List<Float32List> qs;
         try {
           qs = [
-            for (final q in await embedder.embedQueries(parts)) l2Normalized(q),
+            for (final q in await embedder.embedQueries(parts))
+              _vector(q) ?? (throw StateError('embedder dimension mismatch')),
           ];
         } catch (_) {
           return RecallResult.empty; // embedder offline: nothing to cue with
         }
+
         final scored = <Recalled>[];
         var top = 0.0;
         for (final m in _indexed) {
@@ -300,7 +323,7 @@ class EngramMemory {
           for (final c in _mmr(pool)) {
             final m = c.memory;
             final line = '[${m.createdAt} ${m.tz}] ${m.text}　《id:${m.id}》\n';
-            final cost = line.runes.length;   // code points, like Python's len()
+            final cost = line.runes.length; // code points, like Python's len()
             if (lines.isNotEmpty && used + cost > config.budgetChars) {
               continue;
             }
@@ -452,7 +475,7 @@ class EngramMemory {
   Future<Float32List> _cueVector(String cue, Float32List own) async {
     if (cue.isEmpty) return own;
     try {
-      return l2Normalized((await embedder.embedQueries([cue]))[0]);
+      return _vector((await embedder.embedQueries([cue]))[0]) ?? own;
     } catch (_) {
       return own; // embedder offline: fall back to the text
     }
@@ -470,8 +493,8 @@ class EngramMemory {
             (rows[i].id != seed.id && rows[i].createdAt <= seed.createdAt))
           for (final cos in [dot(rows[i].vector, q)])
             if (cos >= config.thetaRelated) (cos, i),
-    ]..sort((a, b) =>
-        a.$1 == b.$1 ? a.$2.compareTo(b.$2) : b.$1.compareTo(a.$1));
+    ]..sort(
+        (a, b) => a.$1 == b.$1 ? a.$2.compareTo(b.$2) : b.$1.compareTo(a.$1));
     return [
       for (final e in near.take(config.dreamMaxMembers - 1)) rows[e.$2],
     ];
@@ -598,10 +621,13 @@ class EngramMemory {
       List<String> texts, List<Memory> cluster, int now) async {
     if (texts.isEmpty) return const [];
     final vectors = [
-      for (final v in await embedder.embedDocuments(texts)) l2Normalized(v),
+      for (final v in await embedder.embedDocuments(texts))
+        // Throwing leaves the seed labile, so the next dream retries it.
+        _vector(v) ?? (throw StateError('embedder dimension mismatch')),
     ];
     for (final v in vectors) {
-      var best = double.negativeInfinity;   // a true max, so gistMinCosine <= 0 still rejects
+      var best = double
+          .negativeInfinity; // a true max, so gistMinCosine <= 0 still rejects
       for (final m in cluster) {
         best = math.max(best, dot(m.vector, v));
       }
@@ -622,8 +648,7 @@ class EngramMemory {
     // The gist was stated when its newest member was, not when the dream ran,
     // so a later update can still reach it as an older candidate.
     // = the seed; candidates are no newer, and ties keep the first.
-    final newest =
-        cluster.reduce((a, b) => b.createdAt > a.createdAt ? b : a);
+    final newest = cluster.reduce((a, b) => b.createdAt > a.createdAt ? b : a);
     return [
       for (var i = 0; i < texts.length; i++)
         Memory(

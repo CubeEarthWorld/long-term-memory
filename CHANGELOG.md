@@ -49,6 +49,22 @@ breaking change to `Memory.copyWith`.
 - **`dot` throws on a dimension mismatch** instead of silently comparing the
   shared prefix: one `modelId` must mean one dimension, as in Python.
 - **`thetaRelated` default is 0.55** (was 0.75), measured on EmbeddingGemma.
+- **One `modelId` means one dimension, enforced.** A stored vector whose length
+  differs from `Embedder.dimension` — a model file swapped behind an unchanged
+  `modelId`, or a provider that mis-sizes one response — is now treated as
+  stale and re-embedded instead of being handed to `dot`, which throws. Before
+  this, one such vector made *every* later `recall` throw for as long as it
+  stayed in the store, and nothing ever re-embedded it. A returned vector of the
+  wrong length is an embedder fault, so the trace keeps its text and is indexed
+  on a later attempt, exactly as when the embedder is offline.
+- **Every row is validated on load** (SPEC §2). A row that an older version or a
+  hand-edited database wrote — no text, or a vector the store cannot decode — is
+  skipped instead of breaking search for the whole store; `InMemoryStore.fromJson`
+  and the SQLite example adapter skip an unreadable row rather than discarding
+  every other memory in the file.
+- **Breaking:** `Embedder` requires `int get dimension` (removed in 0.3.0 as
+  unread by the engine, which now needs it for the rule above).
+  `CallbackEmbedder` takes it as a named argument.
 - **Breaking:** `Memory.copyWith` no longer accepts `text` or `tz`, and the new
   `cue` is not copyable either — a trace's content is never rewritten in place
   (SPEC §7); the dream inserts a new trace instead.

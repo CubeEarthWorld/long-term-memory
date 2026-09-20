@@ -15,7 +15,8 @@ class ToyEmbedder implements Embedder {
   @override
   String get modelId => 'toy/hash-v1';
 
-  static const int dimension = 256;
+  @override
+  final int dimension = 256;
 
   Float32List _embed(String text) {
     final v = Float64List(dimension);

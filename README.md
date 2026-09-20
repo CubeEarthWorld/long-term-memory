@@ -118,12 +118,13 @@ Omitted values fall back to the injected `clock` / `defaultTimezone`, then to th
 ```dart
 abstract class Embedder {
   String get modelId;       // stamped on vectors; switching models re-embeds every trace from text
+  int get dimension;        // one modelId means one dimension
   Future<List<Float32List>> embedQueries(List<String> texts);
   Future<List<Float32List>> embedDocuments(List<String> texts);
 }
 ```
 
-Vectors need not be normalised. `CallbackEmbedder` wires an SDK without declaring a class. If the embedder throws, `remember` still keeps the text (indexed later), `recall` returns nothing, and `dream` re-indexes what it can — the engine never loses data because a model is unavailable. Three parameters depend on the model's cosine distribution and should be calibrated once: `cosineFloor` (baseline cosine of unrelated text, ≈0.4 for EmbeddingGemma), `thetaRelated`, `gistMinCosine`.
+Vectors need not be normalised. `CallbackEmbedder` wires an SDK without declaring a class. If the embedder throws, `remember` still keeps the text (indexed later), `recall` returns nothing, and `dream` re-indexes what it can — the engine never loses data because a model is unavailable. A stored vector of any length other than `dimension` — a model file swapped behind an unchanged `modelId`, or a provider that mis-sizes one response — is treated as stale and re-embedded rather than compared against vectors it cannot be compared with. Three parameters depend on the model's cosine distribution and should be calibrated once: `cosineFloor` (baseline cosine of unrelated text, ≈0.4 for EmbeddingGemma), `thetaRelated`, `gistMinCosine`.
 
 ### 2. `MemoryStore` — your database
 

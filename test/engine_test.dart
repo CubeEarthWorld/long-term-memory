@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:long_term_memory/long_term_memory.dart';
 import 'package:test/test.dart';
 
@@ -18,6 +20,41 @@ void main() {
       expect(b.memory!.stability, greaterThan(86400));
       expect((await memory.remember('   ')).action, RememberAction.rejected);
       expect((await memory.memories()).length, 1);
+    });
+
+    test('a wrong-dimension vector is treated as stale', () async {
+      // One modelId means one dimension: a vector of any other length must not
+      // reach dot(), which throws, and must be re-embedded instead (SPEC §7).
+      final emb = GlitchingEmbedder();
+      final (memory, _, _) = await build(embedder: emb);
+      await memory.remember('a trace the embedder mis-embedded');
+      await memory.remember('user lives in kyoto');   // would throw before
+      expect((await memory.recall('kyoto')).recalled, isNotEmpty);
+      final before = await memory.memories();
+      expect(before.where((m) => m.modelId.isEmpty).length, 1,
+          reason: 'the mis-embedded trace is unindexed, not poisoning search');
+      await memory.initialize();                      // reindex re-embeds it
+      for (final m in await memory.memories()) {
+        expect(m.vector.length, emb.dimension);
+        expect(m.modelId, emb.modelId);
+      }
+    });
+
+    test('a row with no text is skipped on load', () async {
+      final store = InMemoryStore();
+      await store.put(Memory(
+        id: '01EMPTY',
+        text: '',
+        createdAt: 1700000000,
+        tz: 'UTC;+00:00',
+        lastRecall: 1700000000,
+        stability: 86400,
+        consolidated: true,
+        modelId: FakeEmbedder().modelId,
+        vector: Float32List(64),
+      ));
+      final (memory, _, _) = await build(store: store);
+      expect(await memory.memories(), isEmpty);
     });
 
     test('cleans delimiters, whitespace and length', () async {

@@ -11,19 +11,24 @@ class InMemoryStore extends MemoryStore {
 
   /// Restores a store serialised with [toJson].
   ///
-  /// Throws a [FormatException] on malformed input, so a truncated or
-  /// hand-edited persistence file fails where `jsonDecode` does.
+  /// Throws a [FormatException] when the payload is not a list of memories at
+  /// all. An individual entry that cannot be decoded is skipped, so one
+  /// truncated or hand-edited row does not discard every other memory in the
+  /// file (the Python reference store skips such rows too).
   factory InMemoryStore.fromJson(Map<String, Object?> json) {
+    final rows = json['memories'];
+    if (rows != null && rows is! List) {
+      throw const FormatException(
+          'malformed InMemoryStore JSON: "memories" is not a list');
+    }
     final store = InMemoryStore();
-    try {
-      for (final m in (json['memories'] as List<Object?>? ?? const [])) {
+    for (final m in (rows as List<Object?>? ?? const [])) {
+      try {
         final rec = Memory.fromJson((m as Map).cast<String, Object?>());
         store._rows[rec.id] = rec;
+      } catch (_) {
+        continue; // unreadable row: skipped, not fatal
       }
-    } on FormatException {
-      rethrow;
-    } catch (e) {
-      throw FormatException('malformed InMemoryStore JSON: $e');
     }
     return store;
   }

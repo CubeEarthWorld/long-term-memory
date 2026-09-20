@@ -61,25 +61,36 @@ class SqliteMemoryStore extends MemoryStore {
     _open = false;
   }
 
+  /// Every row is validated (SPEC §2). SQLite is dynamically typed, so a
+  /// hand-edited or legacy row can hold a non-numeric stability or a vector
+  /// blob that is not a whole number of float32s; such a row is skipped rather
+  /// than allowed to abort the load for the whole store.
   @override
-  Future<List<Memory>> loadAll() async => [
-        // ORDER BY id, not rowid: INSERT OR REPLACE re-inserts the row with a
-        // fresh rowid, so rowid order is *last write* order. ULIDs are
-        // lexicographically time-ordered, so id order = insertion order.
-        for (final r in _db.select('SELECT * FROM memory ORDER BY id'))
-          Memory(
-            id: r['id'] as String,
-            text: r['text'] as String,
-            createdAt: r['created_at'] as int,
-            tz: r['tz'] as String,
-            lastRecall: r['last_recall'] as int,
-            stability: (r['stability'] as num).toDouble(),
-            consolidated: (r['consolidated'] as int) != 0,
-            modelId: r['model_id'] as String,
-            vector: unpackF32(r['vector'] as Uint8List),
-            cue: r['cue'] as String? ?? '',
-          ),
-      ];
+  Future<List<Memory>> loadAll() async {
+    final out = <Memory>[];
+    // ORDER BY id, not rowid: INSERT OR REPLACE re-inserts the row with a
+    // fresh rowid, so rowid order is *last write* order. ULIDs are
+    // lexicographically time-ordered, so id order = insertion order.
+    for (final r in _db.select('SELECT * FROM memory ORDER BY id')) {
+      try {
+        out.add(Memory(
+          id: r['id'] as String,
+          text: r['text'] as String,
+          createdAt: r['created_at'] as int,
+          tz: r['tz'] as String,
+          lastRecall: r['last_recall'] as int,
+          stability: (r['stability'] as num).toDouble(),
+          consolidated: (r['consolidated'] as int) != 0,
+          modelId: r['model_id'] as String,
+          vector: unpackF32(r['vector'] as Uint8List),
+          cue: r['cue'] as String? ?? '',
+        ));
+      } catch (_) {
+        continue; // unreadable row: skipped, not fatal
+      }
+    }
+    return out;
+  }
 
   @override
   Future<void> put(Memory m) async => _db.execute(

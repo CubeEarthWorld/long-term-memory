@@ -27,6 +27,7 @@ class VirtualClock {
 class FakeEmbedder implements Embedder {
   FakeEmbedder({this.dimension = 64, this.modelId = 'fake/token-overlap'});
 
+  @override
   final int dimension;
 
   @override
@@ -94,10 +95,36 @@ class FakeEmbedder implements Embedder {
       [for (final t in texts) embed(t)];
 }
 
+/// Embedder that contradicts its own [Embedder.dimension] on its first
+/// document call, then behaves normally — a provider glitch.
+class GlitchingEmbedder implements Embedder {
+  final FakeEmbedder _real = FakeEmbedder();
+  var _glitched = false;
+
+  @override
+  String get modelId => _real.modelId;
+
+  @override
+  int get dimension => _real.dimension;
+
+  @override
+  Future<List<Float32List>> embedDocuments(List<String> texts) async {
+    if (_glitched) return _real.embedDocuments(texts);
+    _glitched = true;
+    return [for (final _ in texts) Float32List(dimension ~/ 2)];
+  }
+
+  @override
+  Future<List<Float32List>> embedQueries(List<String> texts) =>
+      _real.embedQueries(texts);
+}
+
 /// Embedder that always throws (simulates an unavailable model).
 class BrokenEmbedder implements Embedder {
   @override
   String get modelId => 'fake/broken';
+  @override
+  int get dimension => 64;
   @override
   Future<List<Float32List>> embedDocuments(List<String> texts) =>
       throw StateError('embedder offline');
