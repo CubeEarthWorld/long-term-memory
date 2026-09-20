@@ -31,6 +31,10 @@ abstract final class EngramPrompts {
       '(例『ユーザーは抹茶味のアイスクリームが好き』)。挨拶・天気・一時的な雑談・一般知識は保存しないでください。'
       '「# 想起された記憶」に既にある事実は再保存しないでください(変更・訂正があるときだけ保存)。\n'
       '・salience は事実の重要度・情動的な重み(1=通常、最大10=極めて重要・強い感情を伴う)です。通常は省略してください。\n'
+      '・cue はこの事実を後で問い直すときユーザーが打つであろう質問文です。具体的な値・固有名詞・日付は含めず、'
+      '誰の何についての事実かだけを書いてください'
+      '(例『ユーザーは抹茶味のアイスクリームが好き』→『ユーザーの好きなデザートは何か？』)。'
+      '同じ事柄を後で更新したとき、古い版を見つけて忘却するために使われます。\n'
       '・日付や予定を保存するときは「今日」「明日」「来週」「再来週」などの相対表現を使わず、'
       '「# 現在日時」を基準に絶対日付(YYYY-MM-DD、できれば曜日も)へ変換して text に書いてください'
       '(例『再来週の水曜に会議』→『2026-06-03(水)に会議がある』)。\n'
@@ -51,6 +55,10 @@ abstract final class EngramPrompts {
       'nor facts already present in "# Recalled memories" (save only changes or corrections).\n'
       '- salience is the importance / emotional weight of the fact (1 = normal, up to 10 = critical or '
       'strongly emotional). Omit it normally.\n'
+      '- cue is the question the user would later ask this fact with. Leave out concrete values, '
+      'proper nouns and dates; write only whose fact about what it is '
+      '(e.g. "The user likes matcha ice cream" → "What dessert does the user like?"). '
+      'It is what finds and forgets the older version when the same matter is updated later.\n'
       '- When saving dates or plans, never use relative words ("today", "tomorrow", "next week"); '
       'convert them to absolute dates (YYYY-MM-DD, ideally with weekday) using "# Current time" '
       '(e.g. "meeting the Wednesday after next" → "Meeting on 2026-06-03 (Wed)").\n'
@@ -58,6 +66,12 @@ abstract final class EngramPrompts {
       '(quote nothing otherwise); the host passes the reply to memory.cite().\n'
       '- Only when the user explicitly asks to forget/delete a past memory, call delete_memory(id) '
       'using the injected 《id:...》.';
+
+  /// The conversation system prompt in [locale].
+  static String conversationSystemPrompt(EngramLocale locale) =>
+      locale == EngramLocale.ja
+          ? conversationSystemPromptJa
+          : conversationSystemPromptEn;
 
   /// Builds the per-turn user message in [locale].
   static String buildUserMessage({
@@ -78,7 +92,7 @@ abstract final class EngramPrompts {
               '# User message\n$userText\n\n'
               '# Your reply (concise; call save_memory for any fact worth keeping)';
 
-  /// OpenAI-style function spec for `save_memory(text, salience?)`.
+  /// OpenAI-style function spec for `save_memory(text, cue, salience?)`.
   static const Map<String, Object?> saveMemoryToolSpec = {
     'type': 'function',
     'function': {
@@ -86,7 +100,8 @@ abstract final class EngramPrompts {
       'description': 'Store one durably useful fact in long-term memory (one proposition per '
           'call). text must be a self-contained sentence without pronouns, ≤170 chars, '
           'with absolute dates (YYYY-MM-DD) instead of relative expressions. salience '
-          '(1–10, default 1) is the importance / emotional weight of the fact.',
+          '(1–10, default 1) is the importance / emotional weight of the fact. '
+          'cue is the question this fact would later be asked with.',
       'parameters': {
         'type': 'object',
         'properties': {
@@ -100,8 +115,17 @@ abstract final class EngramPrompts {
             'description':
                 'Importance / emotional weight, 1 (normal) to 10 (critical)',
           },
+          'cue': {
+            'type': 'string',
+            'description': 'The question the user would later ask this fact with. Leave out concrete '
+                'values, proper nouns and dates; write only whose fact about what it is '
+                '(e.g. "The user likes matcha ice cream" → "What dessert does the user '
+                'like?"; "The user moved to Yokohama in April 2026" → "Where does the '
+                'user live now?"). Used to find and forget the older version when the '
+                'same matter is updated later.',
+          },
         },
-        'required': ['text'],
+        'required': ['text', 'cue'],
       },
     },
   };
@@ -177,7 +201,7 @@ abstract final class EngramPrompts {
 
   /// The consolidation prompt. The LLM returns
   /// `{"action": "keep"}` or
-  /// `{"action": "replace", "memories": ["...", ...]}`.
+  /// `{"action": "replace", "ids": [...], "memories": ["...", ...]}`.
   static String buildDreamInstruction({
     required String currentTime,
     required String listing,
@@ -186,39 +210,46 @@ abstract final class EngramPrompts {
     if (locale == EngramLocale.ja) {
       return 'あなたは長期記憶を睡眠中に整理する統合エンジンです(夢フェーズ)。\n'
           '現在時刻: $currentTime\n'
-          '以下は意味的に近い記憶のクラスタです。各記憶には id・内容時刻(local_time/timezone)・'
-          '想起可能性 R があります。local_time はその記憶が述べられた時点の時刻です。\n\n'
+          '**先頭の記憶が新しく符号化された痕跡**で、続く記憶はそれが再活性化した、より古い記憶です。'
+          '各記憶には id・内容時刻(local_time/timezone)・想起可能性 R があります。'
+          'local_time はその記憶が述べられた時点の時刻です。話題が近いだけの無関係な記憶も混ざります。\n\n'
           '厳守: 入力に存在しない事実を書かないこと(作話禁止)。\n'
           '厳守: 「今日」「明日」「来週」などの相対時間表現は、その記憶の local_time を基準に'
           '絶対日付(YYYY-MM-DD、できれば曜日も)へ変換し、新しい text に相対表現を残さないこと。\n\n'
-          '次のいずれかを選んでください:\n'
-          '- replace: 重複・言い換え・更新・矛盾を整理し、より少数の要点(gist)へ統合する。'
+          '先頭の記憶が、古い記憶のうち**同じ主体の同じ事柄**を更新・訂正・重複しているものを選んでください:\n'
+          '- replace: 選んだ古い記憶の id を ids に挙げ、先頭の記憶とそれらを統合した新しい記憶を memories に書く。'
           '矛盾は local_time が新しい記憶を優先し、変化は命題に書き込む(例『2025年は東京、2026年に大阪へ転居』)。'
           '現在時刻より前に終わった予定は過去の事実として書き直す(例『2026年7月に旅行予定』→『2026年7月に旅行した』)。'
-          '1つの記憶に複数の事実が詰まっていれば独立した記憶へ分ける。異なる事実を無理に1つへまとめない。\n'
-          '- keep: 整理が不要なら何もしない。\n\n'
+          '1つの記憶に複数の事実が詰まっていれば独立した記憶へ分ける。異なる事柄を無理に1つへまとめない。'
+          '該当する古い記憶が無くても、先頭の記憶自身を書き直すべきなら ids を空にして replace してよい。\n'
+          '- keep: 先頭の記憶はそのままでよく、更新する古い記憶も無い場合。\n\n'
+          '話題が近いだけで別の事柄を述べている記憶は ids に挙げないこと(挙げなければ一切変更されません)。\n'
           '各新記憶 text は代名詞を含まない自己完結文・170字以内。「〜時点で確認」のような確認時刻のメタ情報は書かない'
           '(事実が変化した場合の日付だけを書く)。出力は JSON オブジェクトのみ:\n'
-          '{"action": "replace", "memories": ["...", "..."]} または {"action": "keep"}\n\n'
-          '# クラスタ内の記憶\n$listing\n';
+          '{"action": "replace", "ids": ["...", "..."], "memories": ["...", "..."]} または {"action": "keep"}\n\n'
+          '# 記憶(先頭が新しい痕跡)\n$listing\n';
     }
     return 'You are a consolidation engine that tidies long-term memory during sleep (the dream phase).\n'
         'Current time: $currentTime\n'
-        'Below is a cluster of semantically close memories. Each has an id, the time it was stated '
-        '(local_time/timezone) and its retrievability R.\n\n'
+        '**The first memory is the newly encoded trace**; the ones after it are older memories it '
+        'reactivated. Each has an id, the time it was stated (local_time/timezone) and its '
+        'retrievability R. Merely related memories are mixed in.\n\n'
         'STRICT: never write a fact that is not present in the input (no confabulation).\n'
         'STRICT: convert relative time words ("today", "tomorrow", "next week") to absolute dates '
         '(YYYY-MM-DD, ideally with weekday) using that memory\'s local_time; leave no relative expression in the new text.\n\n'
-        'Choose one:\n'
-        '- replace: resolve duplicates, paraphrases, updates and contradictions into fewer gist propositions. '
+        'Pick the older memories that the first one updates, corrects or duplicates '
+        '(same subject, same matter):\n'
+        '- replace: list the ids of those older memories in ids, and write the merged memories. '
         'For contradictions prefer the memory with the newer local_time and write the change into the proposition '
         '(e.g. "Lived in Tokyo in 2025, moved to Osaka in 2026"). Rewrite plans that ended before the current time '
         'as past facts. Split a memory that packs several facts. '
-        'Do not force unrelated facts into one.\n'
-        '- keep: leave the cluster unchanged.\n\n'
+        'Do not force unrelated facts into one. With no matching older memory you may still '
+        'replace with an empty ids to rewrite the first memory itself.\n'
+        '- keep: the first memory stands as written and updates no older memory.\n\n'
+        'Never list an id that merely shares a topic (an id you leave out is not touched at all).\n'
         'Each new text: a self-contained sentence without pronouns, ≤170 chars; no meta remarks such as '
         '"confirmed as of ..." (write dates only when the fact itself changed). Output ONLY a JSON object:\n'
-        '{"action": "replace", "memories": ["...", "..."]} or {"action": "keep"}\n\n'
-        '# Memories in the cluster\n$listing\n';
+        '{"action": "replace", "ids": ["...", "..."], "memories": ["...", "..."]} or {"action": "keep"}\n\n'
+        '# Memories (the first one is the new trace)\n$listing\n';
   }
 }

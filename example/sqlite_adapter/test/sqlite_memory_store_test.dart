@@ -15,6 +15,7 @@ Memory mem(String id, {bool consolidated = false}) => Memory(
       consolidated: consolidated,
       modelId: 'test',
       vector: Float32List.fromList([1, 0, 0]),
+      cue: 'cue of $id',
     );
 
 void main() {
@@ -39,6 +40,7 @@ void main() {
     expect(rows.map((m) => m.id), ['a', 'b']);
     expect(rows[1].consolidated, isTrue);
     expect(rows[0].vector, [1, 0, 0]);
+    expect(rows[0].cue, 'cue of a');   // a dropped cue column went unnoticed
     await store.put(mem('a').copyWith(stability: 99));
     expect(
         (await store.loadAll()).firstWhere((m) => m.id == 'a').stability, 99);

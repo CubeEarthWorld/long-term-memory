@@ -25,11 +25,11 @@ new      : stability = clamp(S0 · salience, 1 s, S_max)
 
 | verb | what happens |
 |---|---|
-| `remember(text, salience:)` | exact duplicate → rehearsal; otherwise insert, **never overwrite**. A trace with a neighbour (cos ≥ θ_related) is born *labile* and reactivates that neighbour (reconsolidation). Over `capacity`, the lowest-strength trace outside the 3-day grace period is forgotten. |
+| `remember(text, salience:, cue:)` | exact duplicate → rehearsal; otherwise insert, **never overwrite**. A trace whose `cue` reaches a neighbour (cos ≥ θ_related) is born *labile*; no existing trace is touched. Over `capacity`, the lowest-strength trace outside the 3-day grace period is forgotten. |
 | `recall(query)` | multi-cue cosine → `score = a·(α + (1−α)·R)` → absolute + relative cut → MMR → `[unix tz] text 《id》` pack ≤ 1024 chars. Injection is exposure: half-activation strengthening. |
 | `cite(reply)` | the `《id》`s the LLM quoted are strengthened as *used* (full activation). |
 | `forget(id)` | id-only physical delete. |
-| `dream(adjudicate:)` | labile traces (most stable first) seed clusters of cos ≥ θ_related neighbours (≤ 8); your LLM answers **keep** or **replace [texts]**. Gists inherit the strongest member's stability plus the *live* evidence of the others; unrelated outputs are rejected as confabulation. A settled store makes no LLM calls. |
+| `dream(adjudicate:)` | labile traces (most stable first) each seed a cluster of the older traces their `cue` reactivates (cos ≥ θ_related, ≤ 8); your LLM answers **keep** or **replace** (the ids it supersedes + the gist texts). Gists inherit the strongest member's stability plus the *live* evidence of the others; unrelated outputs are rejected as confabulation. A settled store makes no LLM calls. |
 
 Everything is bounded, so cost does not depend on elapsed time: a 3000-virtual-year simulation (hundreds of thousands of writes, decade-long silences, a clock fault) is part of the test suite.
 
@@ -56,7 +56,11 @@ Future<void> main() async {
   await memory.initialize();
 
   // REMEMBER — store one self-contained fact (e.g. from an LLM tool call).
-  final saved = await memory.remember('ユーザーは京都に住んでいる', salience: 2);
+  // `cue` is the question this fact would later be asked with: it is what the
+  // dream phase searches the past with, so an update reaches the version it
+  // supersedes even when the two sentences are textually far apart.
+  final saved = await memory.remember('ユーザーは京都に住んでいる',
+      salience: 2, cue: 'ユーザーは今どこに住んでいるか？');
   print(saved.action); // RememberAction.inserted
 
   // RECALL — fetch relevant memories for the next prompt.
@@ -69,7 +73,7 @@ Future<void> main() async {
   // DREAM — offline consolidation through YOUR LLM (run when the app is idle).
   await memory.dream(adjudicate: (request) async {
     final raw = await myLlm.generateJson(request.buildPrompt());
-    return DreamDecision.parseJson(raw);   // {"action":"keep"} or {"action":"replace","memories":[...]}
+    return DreamDecision.parseJson(raw);   // {"action":"keep"} or {"action":"replace","ids":[...],"memories":[...]}
   });
 }
 ```
@@ -86,7 +90,8 @@ user utterance
    │     user    = EngramPrompts.buildUserMessage(currentTime: memory.nowLocal(),
    │                 memoryPack: pack.packText, userText: utterance)
    │     tools   = [EngramPrompts.saveMemoryToolSpec, EngramPrompts.deleteMemoryToolSpec]
-   ├─► on tool call "save_memory"   → memory.remember(args['text'], salience: args['salience'] ?? 1)
+   ├─► on tool call "save_memory"   → memory.remember(args['text'], salience: args['salience'] ?? 1,
+   │                                                   cue: args['cue'] ?? '')
    ├─► on tool call "delete_memory" → memory.forget(args['id'])
    └─► memory.cite(reply)                  → memories the reply quoted as 《id:…》 are strengthened
 ```
@@ -130,14 +135,14 @@ Six operations, no query language: `loadAll`, `put`, `remove`, `clear`, `transac
 typedef DreamAdjudicator = FutureOr<DreamDecision> Function(DreamRequest request);
 ```
 
-`request.members` carry id / text / local time / timezone / R; `request.buildPrompt()` gives the consolidation prompt (ja/en); `DreamDecision.parseJson` never throws. The engine enforces every guard: text hygiene, ≤ 8 members per verdict, no more replacements than members, a cosine check against the members (confabulation guard), strength-conserving inheritance, one transaction per cluster, and retry of clusters whose callback threw.
+`request.members` carry id / text / local time / timezone / R; `request.buildPrompt()` gives the consolidation prompt (ja/en); `DreamDecision.parseJson` parses leniently but throws a `FormatException` on an empty or unparsable answer — including a missing or mistyped `memories` field — so a truncated reasoning model is never read as "keep" (use `DreamDecision.parse`, which returns `null` instead, if you want to decide yourself). The engine enforces every guard: text hygiene, ≤ 8 members per verdict, no more replacements than members, a cosine check against the members (confabulation guard), strength-conserving inheritance, one transaction per cluster, and retry of clusters whose callback threw.
 
 ## API reference
 
 | Method | Purpose |
 |---|---|
 | `initialize()` | Open the store, load and clamp every trace, re-embed stale vectors. |
-| `remember(text, {salience, nowUnix, timezone})` | Store a proposition → `RememberResult` (`inserted` / `reinforced` / `rejected` / `rateLimited`, with `evicted`). |
+| `remember(text, {salience, cue, nowUnix, timezone})` | Store a proposition → `RememberResult` (`inserted` / `reinforced` / `rejected` / `rateLimited`, with `evicted`). |
 | `recall(query, {nowUnix})` | → `RecallResult(packText, recalled)`; injected traces get the half-activation update. |
 | `cite(replyText)` | Complete the strengthening of the traces the reply quoted as `《id:…》`. |
 | `forget(id)` | Physical delete by id → `bool`. |
@@ -157,15 +162,15 @@ All methods are serialized internally; an `EngramMemory` instance is safe to cal
 | `spacingGain` | 3.0 | stability growth on recall |
 | `maxStability` | 10 y | no immortal memory |
 | `gracePeriod` | 3 d | new traces are protected from eviction (unless they exceed a tenth of capacity) |
-| `cosineFloor` | 0.0 | baseline cosine of unrelated text under your model |
+| `cosineFloor` | 0.0 | baseline cosine of unrelated text under your model — the default is model-agnostic (the Python reference ships 0.4, pre-calibrated for EmbeddingGemma) |
 | `alpha` | 0.35 | retrievability floor in the score |
 | `injectN` / `mmrLambda` | 5 / 0.3 | traces injected per recall, MMR diversity |
 | `minScore` / `relativeScore` | 0.1 / 0.6 | absolute and relative score cuts |
 | `budgetChars` / `maxCues` | 1024 / 8 | pack budget, query cues |
-| `thetaRelated` | 0.75 | neighbourhood (labile) threshold |
+| `thetaRelated` | 0.55 | neighbourhood (labile) threshold — how far a cue reaches into the past |
 | `dreamBudget` / `dreamMaxMembers` | 5 / 8 | LLM calls per dream, members per cluster |
 | `gistMinCosine` | 0.5 | replacement texts must relate to the cluster |
-| `textMax` / `writesPerDay` | 170 / 1000 | text limit, soft write rate |
+| `textMax` / `writesPerDay` | 170 / 1000 | text limit (code points, as in Python), soft write rate |
 
 ## Testing your integration
 

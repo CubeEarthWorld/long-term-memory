@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS memory (
   stability REAL NOT NULL,
   consolidated INTEGER NOT NULL,
   model_id TEXT NOT NULL,
-  vector BLOB NOT NULL
+  vector BLOB NOT NULL,
+  cue TEXT NOT NULL DEFAULT ''
 );
 ''';
 
@@ -45,6 +46,11 @@ class SqliteMemoryStore extends MemoryStore {
     _db = sqlite3.open(path);
     _db.execute('PRAGMA journal_mode=WAL;');
     _db.execute(_schema);
+    if (_db
+        .select('PRAGMA table_info(memory)')
+        .every((r) => r['name'] != 'cue')) {
+      _db.execute("ALTER TABLE memory ADD COLUMN cue TEXT NOT NULL DEFAULT ''");
+    }
     _open = true;
   }
 
@@ -57,7 +63,10 @@ class SqliteMemoryStore extends MemoryStore {
 
   @override
   Future<List<Memory>> loadAll() async => [
-        for (final r in _db.select('SELECT * FROM memory ORDER BY rowid'))
+        // ORDER BY id, not rowid: INSERT OR REPLACE re-inserts the row with a
+        // fresh rowid, so rowid order is *last write* order. ULIDs are
+        // lexicographically time-ordered, so id order = insertion order.
+        for (final r in _db.select('SELECT * FROM memory ORDER BY id'))
           Memory(
             id: r['id'] as String,
             text: r['text'] as String,
@@ -68,16 +77,17 @@ class SqliteMemoryStore extends MemoryStore {
             consolidated: (r['consolidated'] as int) != 0,
             modelId: r['model_id'] as String,
             vector: unpackF32(r['vector'] as Uint8List),
+            cue: r['cue'] as String? ?? '',
           ),
       ];
 
   @override
   Future<void> put(Memory m) async => _db.execute(
         'INSERT OR REPLACE INTO memory(id,text,created_at,tz,last_recall,'
-        'stability,consolidated,model_id,vector) VALUES(?,?,?,?,?,?,?,?,?)',
+        'stability,consolidated,model_id,vector,cue) VALUES(?,?,?,?,?,?,?,?,?,?)',
         [
           m.id, m.text, m.createdAt, m.tz, m.lastRecall, m.stability, //
-          m.consolidated ? 1 : 0, m.modelId, packF32(m.vector),
+          m.consolidated ? 1 : 0, m.modelId, packF32(m.vector), m.cue,
         ],
       );
 

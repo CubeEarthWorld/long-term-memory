@@ -14,7 +14,11 @@ import 'support/fakes.dart';
 /// rehearsed facts remain retrievable while noise is forgotten.
 void main() {
   test('3000 virtual years keep invariants and recall quality', () async {
-    const config = EngramConfig(capacity: 300, writesPerDay: 50);
+    // thetaRelated is calibrated per embedding model; the token-overlap fake
+    // scores unrelated text far higher than a real model, so the reactivation
+    // band is raised here to keep the same selectivity.
+    const config =
+        EngramConfig(capacity: 300, writesPerDay: 50, thetaRelated: 0.75);
     final (memory, clock, store) = await build(
       config: config,
       embedder: FakeEmbedder(dimension: 32),
@@ -63,8 +67,7 @@ void main() {
       expect(m.text.length, inInclusiveRange(1, config.textMax));
       expect(m.vector.length, 32);
       final r = memory.retrievability(m, now);
-      expect(r, inInclusiveRange(0, 1));
-      expect(r.isNaN, isFalse);
+      expect(r, inInclusiveRange(0, 1));   // a NaN already fails the range
     }
     for (final f in facts) {
       final r = await memory.recall(f);

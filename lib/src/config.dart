@@ -16,7 +16,7 @@ class EngramConfig {
     this.relativeScore = 0.6,
     this.budgetChars = 1024,
     this.maxCues = 8,
-    this.thetaRelated = 0.75,
+    this.thetaRelated = 0.55,
     this.dreamBudget = 5,
     this.dreamMaxMembers = 8,
     this.gistMinCosine = 0.5,
@@ -114,6 +114,10 @@ class EngramConfig {
 
   /// Lenient JSON parse (keys = field names): missing or mistyped values
   /// fall back to the defaults.
+  ///
+  /// Out-of-range values throw [ArgumentError] (the const constructor's
+  /// asserts are stripped in release builds, and e.g. `cosineFloor: 1` would
+  /// turn every score into NaN). Mirrors the Python twin's `validate()`.
   factory EngramConfig.fromJson(Map<String, Object?> json) {
     const d = EngramConfig();
     int i(String k, int def) => switch (json[k]) {
@@ -126,25 +130,50 @@ class EngramConfig {
           final String v => double.tryParse(v) ?? def,
           _ => def,
         };
+    void need(bool ok, String message) {
+      if (!ok) throw ArgumentError(message);
+    }
+
+    final capacity = i('capacity', d.capacity);
+    final initialStability = f('initialStability', d.initialStability);
+    final maxStability = f('maxStability', d.maxStability);
+    final cosineFloor = f('cosineFloor', d.cosineFloor);
+    final alpha = f('alpha', d.alpha);
+    final relativeScore = f('relativeScore', d.relativeScore);
+    final thetaRelated = f('thetaRelated', d.thetaRelated);
+    final dreamMaxMembers = i('dreamMaxMembers', d.dreamMaxMembers);
+    final injectN = i('injectN', d.injectN);
+    final budgetChars = i('budgetChars', d.budgetChars);
+    final textMax = i('textMax', d.textMax);
+    need(capacity > 0, 'capacity must be positive');
+    need(initialStability > 0 && initialStability <= maxStability,
+        'require 0 < initialStability <= maxStability');
+    need(cosineFloor >= 0 && cosineFloor < 1, 'cosineFloor must be in [0, 1)');
+    need(alpha >= 0 && alpha <= 1 && relativeScore >= 0 && relativeScore <= 1,
+        'alpha and relativeScore must be in [0, 1]');
+    need(
+        thetaRelated > 0 && thetaRelated < 1, 'thetaRelated must be in (0, 1)');
+    need(dreamMaxMembers >= 2 && injectN > 0 && budgetChars > 0 && textMax > 0,
+        'dreamMaxMembers >= 2; injectN, budgetChars, textMax > 0');
     return EngramConfig(
-      capacity: i('capacity', d.capacity),
-      initialStability: f('initialStability', d.initialStability),
+      capacity: capacity,
+      initialStability: initialStability,
       spacingGain: f('spacingGain', d.spacingGain),
-      maxStability: f('maxStability', d.maxStability),
+      maxStability: maxStability,
       gracePeriod: f('gracePeriod', d.gracePeriod),
-      cosineFloor: f('cosineFloor', d.cosineFloor),
-      alpha: f('alpha', d.alpha),
-      injectN: i('injectN', d.injectN),
+      cosineFloor: cosineFloor,
+      alpha: alpha,
+      injectN: injectN,
       mmrLambda: f('mmrLambda', d.mmrLambda),
       minScore: f('minScore', d.minScore),
-      relativeScore: f('relativeScore', d.relativeScore),
-      budgetChars: i('budgetChars', d.budgetChars),
+      relativeScore: relativeScore,
+      budgetChars: budgetChars,
       maxCues: i('maxCues', d.maxCues),
-      thetaRelated: f('thetaRelated', d.thetaRelated),
+      thetaRelated: thetaRelated,
       dreamBudget: i('dreamBudget', d.dreamBudget),
-      dreamMaxMembers: i('dreamMaxMembers', d.dreamMaxMembers),
+      dreamMaxMembers: dreamMaxMembers,
       gistMinCosine: f('gistMinCosine', d.gistMinCosine),
-      textMax: i('textMax', d.textMax),
+      textMax: textMax,
       writesPerDay: i('writesPerDay', d.writesPerDay),
     );
   }

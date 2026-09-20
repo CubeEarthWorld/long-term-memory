@@ -81,8 +81,9 @@ void main() {
     }
     final file = File('${dir.path}/trace.json');
     final encoded = const JsonEncoder.withIndent(' ').convert(trace);
-    if (Platform.environment['CONFORMANCE_WRITE'] == '1' ||
-        !file.existsSync()) {
+    // No `!file.existsSync()` fallback: a missing baseline must make the read
+    // throw, not let the test write the trace and compare it to itself.
+    if (Platform.environment['CONFORMANCE_WRITE'] == '1') {
       file.writeAsStringSync('$encoded\n');
     }
     expect(jsonDecode(file.readAsStringSync()), jsonDecode(encoded));

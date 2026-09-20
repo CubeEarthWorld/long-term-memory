@@ -94,7 +94,7 @@
     "text": "user has a cat named tama",
     "S": "86400.000000",
     "R": "0.943874",
-    "c": false
+    "c": true
    },
    {
     "text": "user has a cat named tama and a dog",
@@ -122,7 +122,7 @@
     "text": "user has a cat named tama",
     "S": "86400.000000",
     "R": "0.943874",
-    "c": false
+    "c": true
    },
    {
     "text": "user has a cat named tama and a dog",
@@ -160,7 +160,7 @@
     "text": "user has a cat named tama",
     "S": "90332.572256",
     "R": "1.000000",
-    "c": false
+    "c": true
    },
    {
     "text": "user has a cat named tama and a dog",
@@ -190,7 +190,7 @@
     "text": "user has a cat named tama",
     "S": "100947.778153",
     "R": "1.000000",
-    "c": false
+    "c": true
    },
    {
     "text": "user has a cat named tama and a dog",
@@ -219,7 +219,7 @@
     "text": "user has a cat named tama",
     "S": "100947.778153",
     "R": "0.168677",
-    "c": false
+    "c": true
    },
    {
     "text": "user has a cat named tama and a dog",
@@ -251,7 +251,7 @@
     "text": "user has a cat named tama",
     "S": "100947.778153",
     "R": "0.168677",
-    "c": false
+    "c": true
    },
    {
     "text": "user has a cat named tama and a dog",
@@ -285,7 +285,7 @@
     "text": "user has a cat named tama",
     "S": "100947.778153",
     "R": "0.168677",
-    "c": false
+    "c": true
    },
    {
     "text": "user has a cat named tama and a dog",
@@ -325,7 +325,7 @@
     "text": "user has a cat named tama",
     "S": "100947.778153",
     "R": "0.168677",
-    "c": false
+    "c": true
    },
    {
     "text": "user has a cat named tama and a dog",
@@ -343,7 +343,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "1.000000",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -365,7 +365,7 @@
     "text": "user has a cat named tama",
     "S": "100947.778153",
     "R": "0.168677",
-    "c": false
+    "c": true
    },
    {
     "text": "user has a cat named tama and a dog",
@@ -383,7 +383,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "1.000000",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -405,11 +405,11 @@
    {
     "action": "replace",
     "before": [
-     "user has a cat named tama",
-     "user has a cat named tama and a dog"
+     "user has a cat named tama and a dog",
+     "user has a cat named tama"
     ],
     "after": [
-     "user has a cat named tama / user has a cat named tama and a dog"
+     "user has a cat named tama and a dog / user has a cat named tama"
     ],
     "stability": [
      "111747.778153"
@@ -427,7 +427,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "1.000000",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -442,7 +442,7 @@
     "c": false
    },
    {
-    "text": "user has a cat named tama / user has a cat named tama and a dog",
+    "text": "user has a cat named tama and a dog / user has a cat named tama",
     "S": "111747.778153",
     "R": "0.249021",
     "c": true
@@ -462,7 +462,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "0.500000",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -477,7 +477,7 @@
     "c": false
    },
    {
-    "text": "user has a cat named tama / user has a cat named tama and a dog",
+    "text": "user has a cat named tama and a dog / user has a cat named tama",
     "S": "111747.778153",
     "R": "0.145710",
     "c": true
@@ -502,7 +502,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "0.500000",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -517,7 +517,7 @@
     "c": false
    },
    {
-    "text": "user has a cat named tama / user has a cat named tama and a dog",
+    "text": "user has a cat named tama and a dog / user has a cat named tama",
     "S": "111747.778153",
     "R": "0.145710",
     "c": true
@@ -536,7 +536,7 @@
   "text": "noise beta 2",
   "stability": "86400.000000",
   "consolidated": true,
-  "evicted": "user has a cat named tama / user has a cat named tama and a dog",
+  "evicted": "user has a cat named tama and a dog / user has a cat named tama",
   "state": [
    {
     "text": "user works at a bank in osaka",
@@ -548,7 +548,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "0.500000",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -588,7 +588,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "0.500000",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -629,7 +629,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "0.000488",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -673,7 +673,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "0.000488",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -715,7 +715,7 @@
     "text": "trip kyoto plan schedule note",
     "S": "86400.000000",
     "R": "0.000488",
-    "c": false
+    "c": true
    },
    {
     "text": "trip kyoto hotel schedule note",
@@ -755,12 +755,12 @@
    {
     "action": "replace",
     "before": [
-     "trip kyoto plan schedule note",
      "trip kyoto hotel schedule note",
+     "trip kyoto plan schedule note",
      "trip kyoto food schedule note"
     ],
     "after": [
-     "trip kyoto plan schedule note / trip kyoto hotel schedule note / trip kyoto food schedule note"
+     "trip kyoto hotel schedule note / trip kyoto plan schedule note / trip kyoto food schedule note"
     ],
     "stability": [
      "86484.375000"
@@ -787,7 +787,7 @@
     "c": true
    },
    {
-    "text": "trip kyoto plan schedule note / trip kyoto hotel schedule note / trip kyoto food schedule note",
+    "text": "trip kyoto hotel schedule note / trip kyoto plan schedule note / trip kyoto food schedule note",
     "S": "86484.375000",
     "R": "0.001463",
     "c": true
@@ -821,7 +821,7 @@
     "c": true
    },
    {
-    "text": "trip kyoto plan schedule note / trip kyoto hotel schedule note / trip kyoto food schedule note",
+    "text": "trip kyoto hotel schedule note / trip kyoto plan schedule note / trip kyoto food schedule note",
     "S": "86484.375000",
     "R": "0.001463",
     "c": true
@@ -863,7 +863,7 @@
     "c": true
    },
    {
-    "text": "trip kyoto plan schedule note / trip kyoto hotel schedule note / trip kyoto food schedule note",
+    "text": "trip kyoto hotel schedule note / trip kyoto plan schedule note / trip kyoto food schedule note",
     "S": "86484.375000",
     "R": "0.001463",
     "c": true

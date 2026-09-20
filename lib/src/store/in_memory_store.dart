@@ -10,11 +10,20 @@ class InMemoryStore extends MemoryStore {
   InMemoryStore();
 
   /// Restores a store serialised with [toJson].
+  ///
+  /// Throws a [FormatException] on malformed input, so a truncated or
+  /// hand-edited persistence file fails where `jsonDecode` does.
   factory InMemoryStore.fromJson(Map<String, Object?> json) {
     final store = InMemoryStore();
-    for (final m in (json['memories'] as List<Object?>? ?? const [])) {
-      final rec = Memory.fromJson((m as Map).cast<String, Object?>());
-      store._rows[rec.id] = rec;
+    try {
+      for (final m in (json['memories'] as List<Object?>? ?? const [])) {
+        final rec = Memory.fromJson((m as Map).cast<String, Object?>());
+        store._rows[rec.id] = rec;
+      }
+    } on FormatException {
+      rethrow;
+    } catch (e) {
+      throw FormatException('malformed InMemoryStore JSON: $e');
     }
     return store;
   }
