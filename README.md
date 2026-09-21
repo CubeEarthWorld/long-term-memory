@@ -148,7 +148,7 @@ typedef DreamAdjudicator = FutureOr<DreamDecision> Function(DreamRequest request
 | `cite(replyText)` | Complete the strengthening of the traces the reply quoted as `《id:…》`. |
 | `forget(id)` | Physical delete by id → `bool`. |
 | `dream({adjudicate, budget, nowUnix, timezone})` | Offline consolidation → `List<DreamReport>` (`keep` / `replace` / `error`). |
-| `clusters()` | The clusters the next dream would hand to the LLM (no LLM call). |
+| `clusters({budget})` | The clusters the next dream would hand to the LLM (no LLM call); `budget` limits it to the seeds `dream(budget:)` scans. |
 | `memories()` / `memory(id)` / `retrievability(m, now)` / `strength(m, now)` | Introspection. |
 | `nowUnix()` / `nowLocal()` / `reset()` | Clock helpers, erase everything. |
 

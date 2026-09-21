@@ -67,7 +67,7 @@ void main() {
       expect(m.text.length, inInclusiveRange(1, config.textMax));
       expect(m.vector.length, 32);
       final r = memory.retrievability(m, now);
-      expect(r, inInclusiveRange(0, 1));   // a NaN already fails the range
+      expect(r, inInclusiveRange(0, 1)); // a NaN already fails the range
     }
     for (final f in facts) {
       final r = await memory.recall(f);

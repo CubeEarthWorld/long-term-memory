@@ -28,12 +28,12 @@ void main() {
       final emb = GlitchingEmbedder();
       final (memory, _, _) = await build(embedder: emb);
       await memory.remember('a trace the embedder mis-embedded');
-      await memory.remember('user lives in kyoto');   // would throw before
+      await memory.remember('user lives in kyoto'); // would throw before
       expect((await memory.recall('kyoto')).recalled, isNotEmpty);
       final before = await memory.memories();
       expect(before.where((m) => m.modelId.isEmpty).length, 1,
           reason: 'the mis-embedded trace is unindexed, not poisoning search');
-      await memory.initialize();                      // reindex re-embeds it
+      await memory.initialize(); // reindex re-embeds it
       for (final m in await memory.memories()) {
         expect(m.vector.length, emb.dimension);
         expect(m.modelId, emb.modelId);

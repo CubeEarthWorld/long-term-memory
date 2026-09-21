@@ -69,7 +69,9 @@ void main() {
     final r2 = await memory2.dream(
         adjudicate: (req) => DreamDecision([
               for (var i = 0; i < req.members.length + 1; i++) 'trip kyoto $i',
-            ], absorbedIds: [for (final m in req.members.skip(1)) m.id]));
+            ], absorbedIds: [
+              for (final m in req.members.skip(1)) m.id
+            ]));
     expect(r2.first.action, DreamAction.keep);
   });
 
@@ -91,8 +93,7 @@ void main() {
     final old = (await memory.remember('user lives in tokyo city', salience: 5))
         .memory!;
     clock.advanceDays(30);
-    final fresh =
-        (await memory.remember('user lives in osaka city')).memory!;
+    final fresh = (await memory.remember('user lives in osaka city')).memory!;
     DreamRequest? seen;
     await memory.dream(adjudicate: (req) {
       seen = req;
@@ -115,12 +116,15 @@ void main() {
     clock.advanceDays(30);
     await memory.remember('user lives in osaka city');
     final reports = await memory.dream(
-        adjudicate: (req) => req.members.first.text != 'user lives in osaka city'
-            ? const DreamDecision.keep()
-            : DreamDecision(['user moved to osaka city'], absorbedIds: [
-                for (final m in req.members.skip(1))
-                  if (m.text == 'user lives in tokyo city') m.id,
-              ]));
+        adjudicate: (req) =>
+            req.members.first.text != 'user lives in osaka city'
+                ? const DreamDecision.keep()
+                : DreamDecision([
+                    'user moved to osaka city'
+                  ], absorbedIds: [
+                    for (final m in req.members.skip(1))
+                      if (m.text == 'user lives in tokyo city') m.id,
+                  ]));
     expect(reports.map((r) => r.action), contains(DreamAction.replace));
     expect(await memory.memory(bystander.id), isNotNull,
         reason: 'not named ⇒ not rewritten');

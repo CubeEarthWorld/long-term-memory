@@ -27,7 +27,8 @@ Float32List l2Normalized(List<double> v) {
 /// (Python raises here too).
 double dot(Float32List a, Float32List b) {
   if (a.length != b.length) {
-    throw ArgumentError('vector dimension mismatch: ${a.length} vs ${b.length} — '
+    throw ArgumentError(
+        'vector dimension mismatch: ${a.length} vs ${b.length} — '
         'change modelId when the dimension changes, so traces are re-embedded');
   }
   var sum = 0.0;

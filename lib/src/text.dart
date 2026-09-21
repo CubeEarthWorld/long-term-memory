@@ -14,7 +14,7 @@ String cleanText(String text, int maxChars) => shorten(
           .replaceAll(RegExp('$whitespaceClass+'), ' ')
           .trim(),
       maxChars,
-    ).trim();   // a boundary cut keeps its separator, which may be a space
+    ).trim(); // a boundary cut keeps its separator, which may be a space
 
 /// Truncates [text] to at most [maxChars], preferring a sentence/clause
 /// boundary in the second half of the cut.
@@ -34,8 +34,7 @@ String shorten(String text, int maxChars) {
   return String.fromCharCodes(cut);
 }
 
-final RegExp _cueBreak =
-    RegExp('\\n+|(?<=[。！？])|(?<=[.!?])$whitespaceClass+');
+final RegExp _cueBreak = RegExp('\\n+|(?<=[。！？])|(?<=[.!?])$whitespaceClass+');
 
 /// Splits a query into cues (lines, then sentences) so a trace relevant to
 /// any part of a long multi-topic turn can surface. More than [maxCues]

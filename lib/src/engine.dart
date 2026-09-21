@@ -410,32 +410,34 @@ class EngramMemory {
   /// the capacity (so a flood evicts its own members) or nothing older
   /// exists. Returns the last victim.
   Future<Memory?> _enforceCapacity(int now) async {
+    final excess = _traces.length - config.capacity;
+    if (excess <= 0) return null;
+    final young = <(double, int, Memory)>[];
+    final old = <(double, int, Memory)>[];
+    var index = 0;
+    for (final m in _traces.values) {
+      final age = now - m.createdAt;
+      (age >= 0 && age < config.gracePeriod ? young : old)
+          .add((_rank(m, now), index++, m));
+    }
+    // Ranks cannot change while evicting: order each age group once (weakest
+    // first, ties by insertion order) instead of rescanning per victim.
+    int compare((double, int, Memory) a, (double, int, Memory) b) =>
+        a.$1 == b.$1 ? a.$2.compareTo(b.$2) : a.$1.compareTo(b.$1);
+    young.sort(compare);
+    old.sort(compare);
+    var yi = 0;
+    var oi = 0;
     Memory? victim;
-    while (_traces.length > config.capacity) {
-      final young = <Memory>[];
-      Memory? weakest;
-      var weakestRank = double.infinity;
-      void consider(Memory m) {
-        final r = _rank(m, now);
-        if (r < weakestRank) {
-          weakest = m;
-          weakestRank = r;
-        }
+    for (var i = 0; i < excess; i++) {
+      if (oi == old.length ||
+          (young.length - yi > config.capacity ~/ 10 &&
+              young[yi].$1 < old[oi].$1)) {
+        victim = young[yi++].$3;
+      } else {
+        victim = old[oi++].$3;
       }
-
-      for (final m in _traces.values) {
-        final age = now - m.createdAt;
-        if (age >= 0 && age < config.gracePeriod) {
-          young.add(m);
-        } else {
-          consider(m);
-        }
-      }
-      if (weakest == null || young.length > config.capacity ~/ 10) {
-        young.forEach(consider);
-      }
-      await _remove(weakest!.id);
-      victim = weakest;
+      await _remove(victim.id);
     }
     return victim;
   }
@@ -447,10 +449,14 @@ class EngramMemory {
   /// The clusters the next dream would hand to the LLM (seed first),
   /// without calling it — for inspection UIs.
   /// Clusters may overlap: a settled trace is a candidate for every later
-  /// piece of evidence.
-  Future<List<List<Memory>>> clusters() => _serialize(() async {
+  /// piece of evidence. With [budget], only the seeds `dream(budget:)` scans —
+  /// one search each, so the unbounded call costs O(labile·N·dim).
+  Future<List<List<Memory>>> clusters({int? budget}) => _serialize(() async {
         final out = <List<Memory>>[];
-        for (final seed in _seeds) {
+        final seeds = budget == null
+            ? _seeds
+            : _seeds.take(_seedsPerBudget * math.max(budget, 0));
+        for (final seed in seeds) {
           final cluster = await _cluster(seed);
           if (cluster.length >= 2) out.add(cluster);
         }

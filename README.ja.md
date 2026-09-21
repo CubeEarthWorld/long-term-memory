@@ -83,7 +83,7 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 | `cite(replyText)` | 応答が引用した《id》の記憶を完全に強化 |
 | `forget(id)` | id 指定の物理削除 → `bool` |
 | `dream({adjudicate, budget, nowUnix, timezone})` | オフライン統合 → `List<DreamReport>`（`keep` / `replace` / `error`） |
-| `clusters()` | 次の夢が LLM に渡すクラスタ（LLM 呼び出しなし） |
+| `clusters({budget})` | 次の夢が LLM に渡すクラスタ（LLM 呼び出しなし）。`budget` を渡すと `dream(budget:)` が走査する種だけに絞る |
 | `memories()` / `memory(id)` / `retrievability` / `strength` / `nowUnix()` / `nowLocal()` / `reset()` | 内省・時計・全消去 |
 
 ## 設定（`EngramConfig`、19 個）

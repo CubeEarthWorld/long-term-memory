@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.1 — no quadratic work in a single call
+
+- **Eviction is O(N log N), not O(E·N).** Ranks cannot change while evicting, so
+  each age group is ordered once and victims are taken from the front, instead
+  of rescanning every survivor per victim — quadratic when a capacity cut
+  forgets a large share of the store. Victims, their order and all tie-breaks
+  are unchanged (checked against the old rescan in `test/scaling_test.dart`).
+- **`clusters({int? budget})`.** The unbounded preview runs one exact search per
+  labile trace, O(labile·N·dim). With `budget` it previews only the seeds
+  `dream(budget:)` scans. The default call is unchanged.
+
 ## 1.0.0 — cues, and no silent failures
 
 First stable release. Every remaining way for the engine to fail quietly is now
