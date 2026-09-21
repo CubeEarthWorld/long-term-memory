@@ -2,9 +2,6 @@
 
 A portable, **zero-dependency** long-term memory engine for LLM applications, written in pure Dart and usable from any Flutter app (all platforms) or Dart server/CLI. It implements **ENGRAM v2.1** — a memory *trace* model derived from the principles of human memory — and is the Dart twin of [CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) (the specification lives there as `SPEC.md`; a cross-language conformance test keeps both implementations identical).
 
-> Generation only at the moment of verbalization. All judgement is distance.
-> All forgetting is arithmetic. All consolidation happens inside the dream.
-
 **The package contains only the algorithm.** The LLM, the embedding model and the database are injected through three small interfaces, so it composes with anything: [firebase_ai](https://pub.dev/packages/firebase_ai), [llamadart](https://pub.dev/documentation/llamadart/latest/), [sqlite3](https://pub.dev/documentation/sqlite3/latest/), drift, Isar, Hive, REST endpoints, on-device ONNX models, …
 
 日本語版は [README.ja.md](README.ja.md) を参照してください。

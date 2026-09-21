@@ -2,8 +2,6 @@
 
 LLM アプリ向けの、移植性が高く**依存ゼロ**の長期記憶エンジン（純 Dart。Flutter 全プラットフォーム／Dart サーバー・CLI で利用可）。人間の記憶の原理から導いた**痕跡（trace）モデル ENGRAM v2.1** を実装しており、[CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) の Dart 版です（仕様書 `SPEC.md` はそちらに置いてあります。言語間一致テストで両実装の同一性を保証しています）。
 
-> 生成は言語化の瞬間だけ。判断はすべて距離。忘却はすべて算術。統合はすべて夢の中。
-
 **パッケージにはアルゴリズムだけが入っています。** LLM・埋め込みモデル・DB は 3 つの小さなインタフェースで注入します。
 
 ## モデルの全体像
