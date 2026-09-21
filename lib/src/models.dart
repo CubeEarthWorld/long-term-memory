@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'vector_math.dart';
 
-/// One memory trace — the canonical record (ENGRAM v2 §2).
+/// One memory trace — the canonical record (ENGRAM v2.1 §2).
 ///
 /// Text is canonical; [vector] is a derived index under [modelId] and is
 /// regenerated from [text] whenever the embedding model changes.

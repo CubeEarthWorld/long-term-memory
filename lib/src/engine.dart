@@ -1,4 +1,4 @@
-/// The ENGRAM v2 engine: traces with a forgetting curve, wake-phase verbs
+/// The ENGRAM v2.1 engine: traces with a forgetting curve, wake-phase verbs
 /// (remember / recall / forget) and a sleep-phase dream.
 library;
 
@@ -19,7 +19,7 @@ import 'vector_math.dart';
 /// cost of a dream to O(budget · capacity · dim)).
 const int _seedsPerBudget = 8;
 
-/// A long-term memory for LLM applications (ENGRAM v2, see SPEC.md).
+/// A long-term memory for LLM applications (ENGRAM v2.1, see SPEC.md).
 ///
 /// Every trace is held in RAM; the injected [MemoryStore] is the durable
 /// substrate, the [Embedder] the index, and — for [dream] only — a
@@ -306,15 +306,11 @@ class EngramMemory {
           scored.add(Recalled(m, score: score, cosine: cos, retrievability: r));
         }
         final floor = math.max(config.minScore, config.relativeScore * top);
-        // List.sort is not stable above ~32 elements, so score ties are broken
-        // on insertion order explicitly — the one order both languages agree on.
-        final ranked = <(int, Recalled)>[
-          for (var i = 0; i < scored.length; i++)
-            if (scored[i].score >= floor) (i, scored[i]),
-        ]..sort((a, b) => a.$2.score == b.$2.score
-            ? a.$1.compareTo(b.$1)
-            : b.$2.score.compareTo(a.$2.score));
-        final pool = [for (final e in ranked) e.$2];
+        // Insertion order; MMR ties keep it.
+        final pool = [
+          for (final c in scored)
+            if (c.score >= floor) c
+        ];
         final lines = <String>[];
         final packed = <Recalled>[];
         var used = 0;
@@ -449,33 +445,24 @@ class EngramMemory {
   /// The clusters the next dream would hand to the LLM (seed first),
   /// without calling it — for inspection UIs.
   /// Clusters may overlap: a settled trace is a candidate for every later
-  /// piece of evidence. With [budget], only the seeds `dream(budget:)` scans —
-  /// one search each, so the unbounded call costs O(labile·N·dim).
+  /// piece of evidence. [budget] defaults to [EngramConfig.dreamBudget], as
+  /// in [dream].
   Future<List<List<Memory>>> clusters({int? budget}) => _serialize(() async {
         final out = <List<Memory>>[];
-        final seeds = budget == null
-            ? _seeds
-            : _seeds.take(_seedsPerBudget * math.max(budget, 0));
-        for (final seed in seeds) {
+        for (final seed in _seeds(budget ?? config.dreamBudget)) {
           final cluster = await _cluster(seed);
           if (cluster.length >= 2) out.add(cluster);
         }
         return out;
       });
 
-  /// Labile traces, most stable first: what carries the most accumulated
-  /// evidence is integrated first. Ties break on insertion order, the one
-  /// order both languages agree on (ULID tails are random).
-  List<Memory> get _seeds {
-    final rows = _indexed.toList(growable: false);
-    final labile = <(int, Memory)>[
-      for (var i = 0; i < rows.length; i++)
-        if (!rows[i].consolidated) (i, rows[i]),
-    ]..sort((a, b) => b.$2.stability == a.$2.stability
-        ? a.$1.compareTo(b.$1)
-        : b.$2.stability.compareTo(a.$2.stability));
-    return [for (final e in labile) e.$2];
-  }
+  /// The labile traces a dream of [budget] scans: first in, first out
+  /// (insertion order), at most 8·budget. FIFO needs no ranking and never
+  /// starves a seed. Materialised: the dream mutates [_traces] as it goes.
+  List<Memory> _seeds(int budget) => _indexed
+      .where((m) => !m.consolidated)
+      .take(_seedsPerBudget * math.max(budget, 0))
+      .toList(growable: false);
 
   /// The cue's query vector; the trace's own vector when it has no cue.
   Future<Float32List> _cueVector(String cue, Float32List own) async {
@@ -526,7 +513,7 @@ class EngramMemory {
         await _reindex();
         var left = budget ?? config.dreamBudget;
         final reports = <DreamReport>[];
-        for (final s in _seeds.take(_seedsPerBudget * math.max(left, 0))) {
+        for (final s in _seeds(left)) {
           final seed = _traces[s.id];
           if (seed == null || seed.consolidated) {
             continue;
@@ -612,7 +599,6 @@ class EngramMemory {
     for (final g in gists) {
       _traces[g.id] = g;
     }
-    await _enforceCapacity(now);
     return DreamReport(
         action: DreamAction.replace, before: cluster, after: gists);
   }

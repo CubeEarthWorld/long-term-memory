@@ -1,7 +1,7 @@
 name: long_term_memory
 description: >-
   A portable, dependency-light long-term memory engine for LLM applications
-  (ENGRAM v2). Bring your own LLM, embedding model and database: the package
+  (ENGRAM v2.1). Bring your own LLM, embedding model and database: the package
   contains the full memory-trace algorithm (forgetting curve with spacing,
   strength-based forgetting, MMR retrieval, citation and dream-phase
   consolidation), while every external capability is injected through small

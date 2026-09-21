@@ -75,7 +75,7 @@ void main() {
     expect(r2.first.action, DreamAction.keep);
   });
 
-  test('budget bounds LLM calls; strongest seeds first', () async {
+  test('budget bounds LLM calls; seeds are first in, first out', () async {
     final (memory, _, _) = await build();
     await memory.remember('weak pair one alpha x');
     await memory.remember('weak pair one alpha y');
@@ -83,7 +83,7 @@ void main() {
     await memory.remember('strong pair two beta y', salience: 5);
     final reports = await memory.dream(adjudicate: mergeToGist, budget: 1);
     expect(reports.length, 1);
-    expect(reports.single.before.first.text, startsWith('strong'));
+    expect(reports.single.before.first.text, startsWith('weak'));
     expect((await memory.clusters()).length, 1);
   });
 

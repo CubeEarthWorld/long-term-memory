@@ -1,15 +1,32 @@
 # Changelog
 
-## 1.0.1 — no quadratic work in a single call
+## 1.0.1 — ENGRAM v2.1: nothing grows faster than the store
 
-- **Eviction is O(N log N), not O(E·N).** Ranks cannot change while evicting, so
-  each age group is ordered once and victims are taken from the front, instead
-  of rescanning every survivor per victim — quadratic when a capacity cut
-  forgets a large share of the store. Victims, their order and all tie-breaks
-  are unchanged (checked against the old rescan in `test/scaling_test.dart`).
-- **`clusters({int? budget})`.** The unbounded preview runs one exact search per
-  labile trace, O(labile·N·dim). With `budget` it previews only the seeds
-  `dream(budget:)` scans. The default call is unchanged.
+The spec is now ENGRAM v2.1. No call does work quadratic in the number of
+traces: the wake phase stays O(capacity·dim) per call, a dream
+O(budget·capacity·dim), and the sorts that only existed to order things are
+gone. The shared conformance trace passes unregenerated.
+
+- **Eviction is sort-once.** Ranks cannot change while evicting, so each age
+  group is ordered once and victims are taken from the front, instead of
+  rescanning every survivor per victim — O(N log N) instead of O(E·N), which
+  was quadratic when a lowered capacity forgets a large share of the store.
+  Same victims, same order, same tie-breaks.
+- **Dream seeds are first in, first out.** The seeds are the labile traces in
+  insertion order, at most 8·budget — no stability sort. Besides dropping the
+  ranking, this means a weak seed can no longer be starved forever behind a
+  backlog of stronger ones. *Behaviour change:* with a budget smaller than the
+  backlog, the oldest evidence is consolidated first, not the most stable.
+- **`clusters({int? budget})` shows exactly what `dream(budget:)` would
+  adjudicate**; `budget` defaults to `dreamBudget`, as in `dream`. The
+  unbounded preview (one exact search per labile trace, O(labile·N·dim)) is
+  gone. *Behaviour change:* `clusters()` returns at most the clusters of the
+  first 8·`dreamBudget` seeds; pass a larger budget to see more.
+- **The recall pool is not sorted.** Candidates above the floor go to MMR in
+  insertion order; MMR already picks the best and breaks ties on insertion
+  order, so the sort only cost time.
+- **A dream no longer re-checks capacity.** Gists never outnumber the traces
+  they absorb, so a dream cannot grow the store.
 
 ## 1.0.0 — cues, and no silent failures
 

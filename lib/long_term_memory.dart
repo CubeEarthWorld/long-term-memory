@@ -1,4 +1,4 @@
-/// A portable long-term memory engine for LLM applications (ENGRAM v2).
+/// A portable long-term memory engine for LLM applications (ENGRAM v2.1).
 ///
 /// Bring your own LLM, embedding model and database — the package contains
 /// only the algorithm:

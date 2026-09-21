@@ -1,4 +1,4 @@
-/// ENGRAM v2 parameters (SPEC §6). Defaults are the reference values; tune
+/// ENGRAM v2.1 parameters (SPEC §6). Defaults are the reference values; tune
 /// only with a record of why.
 class EngramConfig {
   /// Creates a configuration. Every parameter has the spec default.

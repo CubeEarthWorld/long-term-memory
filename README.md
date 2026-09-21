@@ -1,6 +1,6 @@
 # long_term_memory
 
-A portable, **zero-dependency** long-term memory engine for LLM applications, written in pure Dart and usable from any Flutter app (all platforms) or Dart server/CLI. It implements **ENGRAM v2** — a memory *trace* model derived from the principles of human memory — and is the Dart twin of [CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) (the specification lives there as `SPEC.md`; a cross-language conformance test keeps both implementations identical).
+A portable, **zero-dependency** long-term memory engine for LLM applications, written in pure Dart and usable from any Flutter app (all platforms) or Dart server/CLI. It implements **ENGRAM v2.1** — a memory *trace* model derived from the principles of human memory — and is the Dart twin of [CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) (the specification lives there as `SPEC.md`; a cross-language conformance test keeps both implementations identical).
 
 > Generation only at the moment of verbalization. All judgement is distance.
 > All forgetting is arithmetic. All consolidation happens inside the dream.
@@ -29,7 +29,7 @@ new      : stability = clamp(S0 · salience, 1 s, S_max)
 | `recall(query)` | multi-cue cosine → `score = a·(α + (1−α)·R)` → absolute + relative cut → MMR → `[unix tz] text 《id》` pack ≤ 1024 chars. Injection is exposure: half-activation strengthening. |
 | `cite(reply)` | the `《id》`s the LLM quoted are strengthened as *used* (full activation). |
 | `forget(id)` | id-only physical delete. |
-| `dream(adjudicate:)` | labile traces (most stable first) each seed a cluster of the older traces their `cue` reactivates (cos ≥ θ_related, ≤ 8); your LLM answers **keep** or **replace** (the ids it supersedes + the gist texts). Gists inherit the strongest member's stability plus the *live* evidence of the others; unrelated outputs are rejected as confabulation. A settled store makes no LLM calls. |
+| `dream(adjudicate:)` | labile traces (first in, first out; ≤ 8·budget) each seed a cluster of the older traces their `cue` reactivates (cos ≥ θ_related, ≤ 8); your LLM answers **keep** or **replace** (the ids it supersedes + the gist texts). Gists inherit the strongest member's stability plus the *live* evidence of the others; unrelated outputs are rejected as confabulation. A settled store makes no LLM calls. |
 
 Everything is bounded, so cost does not depend on elapsed time: a 3000-virtual-year simulation (hundreds of thousands of writes, decade-long silences, a clock fault) is part of the test suite.
 
@@ -148,7 +148,7 @@ typedef DreamAdjudicator = FutureOr<DreamDecision> Function(DreamRequest request
 | `cite(replyText)` | Complete the strengthening of the traces the reply quoted as `《id:…》`. |
 | `forget(id)` | Physical delete by id → `bool`. |
 | `dream({adjudicate, budget, nowUnix, timezone})` | Offline consolidation → `List<DreamReport>` (`keep` / `replace` / `error`). |
-| `clusters({budget})` | The clusters the next dream would hand to the LLM (no LLM call); `budget` limits it to the seeds `dream(budget:)` scans. |
+| `clusters({budget})` | The clusters the next dream would hand to the LLM (no LLM call); exactly the seeds `dream(budget:)` scans (default `dreamBudget`). |
 | `memories()` / `memory(id)` / `retrievability(m, now)` / `strength(m, now)` | Introspection. |
 | `nowUnix()` / `nowLocal()` / `reset()` | Clock helpers, erase everything. |
 

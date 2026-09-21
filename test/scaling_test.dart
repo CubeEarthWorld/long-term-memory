@@ -79,7 +79,8 @@ void main() {
     }
   }
 
-  test('clusters(budget:) previews exactly the seeds dream scans', () async {
+  test('clusters(budget:) previews the seeds dream scans, first in first out',
+      () async {
     final store = InMemoryStore();
     final embedder = FakeEmbedder();
     for (var i = 0; i < 100; i++) {
@@ -97,10 +98,10 @@ void main() {
     }
     final (memory, _, _) = await build(store: store, embedder: embedder);
     List<String> seeds(List<List<Memory>> cs) => [for (final c in cs) c[0].id];
-    final all = seeds(await memory.clusters());
-    expect(all, hasLength(100));
+    final fifo = [for (var i = 0; i < 100; i++) '$i'];
+    expect(seeds(await memory.clusters()), fifo.take(8 * 5));
     expect(seeds(await memory.clusters(budget: 0)), isEmpty);
-    expect(seeds(await memory.clusters(budget: 2)), all.take(16));
-    expect(seeds(await memory.clusters(budget: 100)), all);
+    expect(seeds(await memory.clusters(budget: 2)), fifo.take(16));
+    expect(seeds(await memory.clusters(budget: 100)), fifo);
   });
 }

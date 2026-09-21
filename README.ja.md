@@ -1,6 +1,6 @@
 # long_term_memory
 
-LLM アプリ向けの、移植性が高く**依存ゼロ**の長期記憶エンジン（純 Dart。Flutter 全プラットフォーム／Dart サーバー・CLI で利用可）。人間の記憶の原理から導いた**痕跡（trace）モデル ENGRAM v2** を実装しており、[CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) の Dart 版です（仕様書 `SPEC.md` はそちらに置いてあります。言語間一致テストで両実装の同一性を保証しています）。
+LLM アプリ向けの、移植性が高く**依存ゼロ**の長期記憶エンジン（純 Dart。Flutter 全プラットフォーム／Dart サーバー・CLI で利用可）。人間の記憶の原理から導いた**痕跡（trace）モデル ENGRAM v2.1** を実装しており、[CubeEarthWorld/llm-long-term-memory](https://github.com/CubeEarthWorld/llm-long-term-memory) の Dart 版です（仕様書 `SPEC.md` はそちらに置いてあります。言語間一致テストで両実装の同一性を保証しています）。
 
 > 生成は言語化の瞬間だけ。判断はすべて距離。忘却はすべて算術。統合はすべて夢の中。
 
@@ -24,7 +24,7 @@ a        = max(0, (cos − cosineFloor) / (1 − cosineFloor))     手がかり�
 | `recall(query)` | 複数手がかりのコサイン → `score = a·(α + (1−α)·R)` → 絶対・相対閾値 → MMR → `[unix tz] text 《id》` を ≤1024 字で注入。注入は「露出」なので半分だけ強化。 |
 | `cite(reply)` | LLM が引用した《id》の記憶を「使用」として完全に強化。 |
 | `forget(id)` | id 指定の物理削除。 |
-| `dream(adjudicate:)` | 不安定な痕跡（安定度順）を種に、その `cue` が再活性化した**より古い**痕跡のクラスタ（cos ≥ θ_related、≤8）を作り、あなたの LLM が **keep** か **replace**（更新される古い記憶の id ＋ 要旨テキスト）を判定。要旨は最強成員の安定度＋他の「生きた証拠」を継承。無関係な出力は作話として拒否。整理済みのストアでは LLM を呼ばない。 |
+| `dream(adjudicate:)` | 不安定な痕跡（先入れ先出し、≤ 8·budget）を種に、その `cue` が再活性化した**より古い**痕跡のクラスタ（cos ≥ θ_related、≤8）を作り、あなたの LLM が **keep** か **replace**（更新される古い記憶の id ＋ 要旨テキスト）を判定。要旨は最強成員の安定度＋他の「生きた証拠」を継承。無関係な出力は作話として拒否。整理済みのストアでは LLM を呼ばない。 |
 
 全状態が有界なので演算コストは経過時間に依存しません。3000 仮想年のシミュレーション（数十万回の書込み・10 年の沈黙・時計故障）がテストに含まれています。
 
@@ -83,7 +83,7 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 | `cite(replyText)` | 応答が引用した《id》の記憶を完全に強化 |
 | `forget(id)` | id 指定の物理削除 → `bool` |
 | `dream({adjudicate, budget, nowUnix, timezone})` | オフライン統合 → `List<DreamReport>`（`keep` / `replace` / `error`） |
-| `clusters({budget})` | 次の夢が LLM に渡すクラスタ（LLM 呼び出しなし）。`budget` を渡すと `dream(budget:)` が走査する種だけに絞る |
+| `clusters({budget})` | 次の夢が LLM に渡すクラスタ（LLM 呼び出しなし）。`dream(budget:)` が走査する種そのもの（既定は `dreamBudget`） |
 | `memories()` / `memory(id)` / `retrievability` / `strength` / `nowUnix()` / `nowLocal()` / `reset()` | 内省・時計・全消去 |
 
 ## 設定（`EngramConfig`、19 個）
