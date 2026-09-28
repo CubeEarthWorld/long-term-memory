@@ -27,6 +27,26 @@ gone. The shared conformance trace passes unregenerated.
   order, so the sort only cost time.
 - **A dream no longer re-checks capacity.** Gists never outnumber the traces
   they absorb, so a dream cannot grow the store.
+- **Cue embeddings are batched.** `clusters()` and `dream()` embed the distinct
+  non-empty cues of their whole seed list in one `embedQueries` call (up to 80
+  calls before). An offline embedder still leaves every seed on its own
+  vector; a wrong-dimension result falls back for that cue alone. `remember`
+  keeps its single call.
+- **`clusters()` scans the store once.** It changes nothing, so every seed's
+  cue is scored in one multi-query pass, then filtered, ordered and capped per
+  seed exactly as before. A dream still searches per seed, since each verdict
+  rewrites what the next seed searches.
+- **`recall` builds a `Recalled` only for the pool.** Scores go into flat
+  arrays first; same results, same order.
+- **Pluggable `VectorIndex`.** Every similarity scan — recall, candidate
+  search, `clusters()`, MMR and the confabulation guard — goes through
+  `VectorIndex.scores(ids, queries)`, so an app can plug in a native kernel
+  with `EngramMemory(index: ...)`. The engine keeps the index exactly in step
+  with its indexed traces; the default `DartVectorIndex` scores with `dot`
+  (now exported), and any implementation must match it bit for bit. A
+  seeded-workload golden recorded before these changes
+  (`test/equivalence/golden.json`) passes bit for bit, as does the shared
+  conformance trace.
 
 ## 1.0.0 — cues, and no silent failures
 

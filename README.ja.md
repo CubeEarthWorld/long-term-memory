@@ -65,6 +65,7 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 
 - **`Embedder`** — `modelId` / `dimension` / `embedQueries` / `embedDocuments`。正規化は不要。埋め込みが失敗しても `remember` は本文を保持し（後で索引化）、`recall` は空を返し、`dream` は可能な範囲で再索引します。1 つの `modelId` は 1 つの次元を意味し、`dimension` と長さの違うベクトル（`modelId` を変えずにモデルを差し替えた、あるいは 1 回だけ異常な長さが返った場合）は比較せず、陳腐として再埋め込みされます。モデル依存の 3 パラメータ（`cosineFloor`≈EmbeddingGemma で 0.4、`thetaRelated`、`gistMinCosine`）は一度較正してください。
 - **`MemoryStore`** — `loadAll / put / remove / clear / transaction / backup`（＋ open/close）の 6 操作。全件は RAM に保持され（1 万件 × 768 次元で約 35 MB）、ストアは永続化のみ。`InMemoryStore` 同梱、SQLite アダプタ（WAL・トランザクション・スナップショットリング）は [`example/sqlite_adapter`](example/sqlite_adapter)。
+- **`VectorIndex`（任意）** — 類似度計算の差し替え口。想起・夢の候補検索・`clusters()`・MMR・作話ガードのコサインはすべて `put(id, vector)` / `remove(id)` / `clear()` / `scores(ids, queries)`（`out[i * queries.length + j] == dot(vector(ids[i]), queries[j])`）を通るため、アプリはネイティブ実装（Rust / C / SIMD）を `EngramMemory(..., index: MyNativeIndex())` で渡せます。既定は純 Dart の `DartVectorIndex`。エンジンが索引を所有し、「痕跡が存在し、現在の `modelId` と `dimension` で索引化されている」ときに限りベクトルを保持するよう常に同期します（`initialize` は最初に `clear`、強度更新ではベクトルを再 `put` しない）。実装は公開関数 `dot` と完全に同じ計算（float32 を double に広げ、次元順に double で総和）をしなければならず、そうすればスコアも同点の順序もビット一致します。次元不一致では `ArgumentError`。呼び出しはまとめられ、`recall` は全 cue を 1 回で、`clusters()` は全種の cue を 1 回で採点します（夢は裁定ごとにストアが変わるため種ごとに検索）。
 - **`DreamAdjudicator`** — `DreamRequest` を受けて `DreamDecision` を返すコールバック。`DreamDecision.parseJson` は寛容に解析しますが、空・解析不能な応答（`memories` フィールドの欠落や型違いも含む）では `FormatException` を投げます。沈黙を「keep」と読まないためで（打ち切られた推論モデルが痕跡を恒久的に固定化してしまう）、そのクラスタは不安定なまま次の夢で再試行されます（自分で判断したい場合は `null` を返す `DreamDecision.parse` を使ってください）。本文の清浄化・1 裁定 ≤ 8 行・成員数を超える置換の拒否・成員とのコサイン検査（作話ガード）・強度保存の継承・1 クラスタ = 1 トランザクション・失敗クラスタの再試行はエンジンが保証します。
 
 ## 時刻とタイムゾーン
@@ -75,13 +76,14 @@ await memory.dream(adjudicate: (request) async {                      // 夢（�
 
 | メソッド | 目的 |
 |---|---|
+| `EngramMemory({store, embedder, config, clock, defaultTimezone, index})` | 生成。`index` は任意の `VectorIndex`（既定 `DartVectorIndex`） |
 | `initialize()` | ストアを開き、全件を読込・クランプし、古いモデルのベクトルを再埋め込み |
 | `remember(text, {salience, cue, nowUnix, timezone})` | → `RememberResult`（`inserted` / `reinforced` / `rejected` / `rateLimited`、`evicted`） |
 | `recall(query, {nowUnix})` | → `RecallResult(packText, recalled)` |
 | `cite(replyText)` | 応答が引用した《id》の記憶を完全に強化 |
 | `forget(id)` | id 指定の物理削除 → `bool` |
 | `dream({adjudicate, budget, nowUnix, timezone})` | オフライン統合 → `List<DreamReport>`（`keep` / `replace` / `error`） |
-| `clusters({budget})` | 次の夢が LLM に渡すクラスタ（LLM 呼び出しなし）。`dream(budget:)` が走査する種そのもの（既定は `dreamBudget`） |
+| `clusters({budget})` | 次の夢が LLM に渡すクラスタ（LLM 呼び出しなし）。`dream(budget:)` が走査する種そのもの（既定は `dreamBudget`）。全種の cue を 1 回の `embedQueries` で埋め込み、索引を 1 回走査して採点 |
 | `memories()` / `memory(id)` / `retrievability` / `strength` / `nowUnix()` / `nowLocal()` / `reset()` | 内省・時計・全消去 |
 
 ## 設定（`EngramConfig`、19 個）

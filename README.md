@@ -127,6 +127,24 @@ Vectors need not be normalised. `CallbackEmbedder` wires an SDK without declarin
 
 Six operations, no query language: `loadAll`, `put`, `remove`, `clear`, `transaction`, `backup` (+ `open`/`close`). The engine holds every trace in RAM (≈35 MB at 10k traces × 768 dims); the store only persists. `InMemoryStore` is bundled (with `toJson`/`fromJson`), and a complete SQLite adapter with WAL, transactions and a rotating snapshot ring ships in [`example/sqlite_adapter`](example/sqlite_adapter).
 
+### Optional: `VectorIndex` — your similarity kernel
+
+Every similarity the engine computes (recall, the dream's candidate search, `clusters()`, MMR, the confabulation guard) goes through one interface, so an app can replace the pure-Dart loop with a native (Rust / C / SIMD) one:
+
+```dart
+abstract interface class VectorIndex {
+  void put(String id, Float32List vector);  // store or replace
+  void remove(String id);                   // no-op when absent
+  void clear();
+  /// out[i * queries.length + j] == dot(vector(ids[i]), queries[j])
+  Float64List scores(List<String> ids, List<Float32List> queries);
+}
+
+final memory = EngramMemory(store: ..., embedder: ..., index: MyNativeIndex());
+```
+
+The engine owns the index and keeps it exactly in step with its traces: it holds a vector iff the trace exists and is indexed under the current `modelId` and `dimension` (`initialize` clears it first; a strength update does not re-put an unchanged vector). The default is `DartVectorIndex`. An implementation must compute each score exactly as the exported `dot` does — float32 inputs widened to double, products summed in double precision in dimension order — so scores and tie orders stay bit-identical; `scores` throws `ArgumentError` on a dimension mismatch. Calls are batched: `recall` scores every trace against all its cues in one call, and `clusters()` scores every seed's cue in one call (a dream still searches per seed, because each verdict rewrites what the next seed searches).
+
 ### 3. `DreamAdjudicator` — your LLM (dream phase only)
 
 ```dart
@@ -139,13 +157,14 @@ typedef DreamAdjudicator = FutureOr<DreamDecision> Function(DreamRequest request
 
 | Method | Purpose |
 |---|---|
+| `EngramMemory({store, embedder, config, clock, defaultTimezone, index})` | Construct; `index` is an optional `VectorIndex` (default `DartVectorIndex`). |
 | `initialize()` | Open the store, load and clamp every trace, re-embed stale vectors. |
 | `remember(text, {salience, cue, nowUnix, timezone})` | Store a proposition → `RememberResult` (`inserted` / `reinforced` / `rejected` / `rateLimited`, with `evicted`). |
 | `recall(query, {nowUnix})` | → `RecallResult(packText, recalled)`; injected traces get the half-activation update. |
 | `cite(replyText)` | Complete the strengthening of the traces the reply quoted as `《id:…》`. |
 | `forget(id)` | Physical delete by id → `bool`. |
 | `dream({adjudicate, budget, nowUnix, timezone})` | Offline consolidation → `List<DreamReport>` (`keep` / `replace` / `error`). |
-| `clusters({budget})` | The clusters the next dream would hand to the LLM (no LLM call); exactly the seeds `dream(budget:)` scans (default `dreamBudget`). |
+| `clusters({budget})` | The clusters the next dream would hand to the LLM (no LLM call); exactly the seeds `dream(budget:)` scans (default `dreamBudget`). All seed cues are embedded in one `embedQueries` call and scored in one index pass. |
 | `memories()` / `memory(id)` / `retrievability(m, now)` / `strength(m, now)` | Introspection. |
 | `nowUnix()` / `nowLocal()` / `reset()` | Clock helpers, erase everything. |
 

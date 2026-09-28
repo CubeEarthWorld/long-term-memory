@@ -13,6 +13,7 @@ import 'store/memory_store.dart';
 import 'text.dart';
 import 'timezone.dart';
 import 'ulid.dart';
+import 'vector_index.dart';
 import 'vector_math.dart';
 
 /// Seeds examined per dream, as a multiple of the LLM budget (bounds the
@@ -22,22 +23,28 @@ const int _seedsPerBudget = 8;
 /// A long-term memory for LLM applications (ENGRAM v2.1, see SPEC.md).
 ///
 /// Every trace is held in RAM; the injected [MemoryStore] is the durable
-/// substrate, the [Embedder] the index, and — for [dream] only — a
-/// [DreamAdjudicator] backed by any LLM. Every entry point accepts an
-/// explicit Unix time (`nowUnix`, seconds) and a [MemoryTimezone]; omitted
-/// values fall back to the injected [clock] / `defaultTimezone`, then to
-/// the system clock / UTC. Public methods are serialized, so an instance is
+/// substrate, the [Embedder] turns text into vectors, the [VectorIndex] scores
+/// them (pure Dart by default; an application may plug in a native one) and —
+/// for [dream] only — a [DreamAdjudicator] backed by any LLM. Every entry
+/// point accepts an explicit Unix time (`nowUnix`, seconds) and a
+/// [MemoryTimezone]; omitted values fall back to the injected [clock] /
+/// `defaultTimezone`, then to the system clock / UTC. Public methods are serialized, so an instance is
 /// safe to call from interleaving async code. One process owns a store.
 class EngramMemory {
-  /// Creates an engine over [store] and [embedder].
+  /// Creates an engine over [store] and [embedder]. [index] holds the vectors
+  /// of the indexed traces (default [DartVectorIndex]); the engine owns it and
+  /// keeps it in step with its traces, so it must not be shared with another
+  /// engine ([initialize] clears it).
   EngramMemory({
     required this.store,
     required this.embedder,
     this.config = const EngramConfig(),
     int Function()? clock,
     MemoryTimezone? defaultTimezone,
+    VectorIndex? index,
   })  : _clock = clock,
-        _defaultTz = defaultTimezone ?? MemoryTimezone.utc;
+        _defaultTz = defaultTimezone ?? MemoryTimezone.utc,
+        _index = index ?? DartVectorIndex();
 
   /// The injected storage backend.
   final MemoryStore store;
@@ -50,7 +57,12 @@ class EngramMemory {
 
   final int Function()? _clock;
   final MemoryTimezone _defaultTz;
+
+  /// Every trace, in insertion order (which breaks every tie). Mutated only by
+  /// [_setTrace], [_dropTrace] and [_clearTraces], which keep [_index] holding
+  /// exactly the traces that are [_isIndexed].
   final Map<String, Memory> _traces = {};
+  final VectorIndex _index;
   final List<int> _writeTimes = [];
   final Map<String, Recalled> _lastRecall = {};
   Future<void> _chain = Future<void>.value();
@@ -129,7 +141,7 @@ class EngramMemory {
   Future<void> initialize() => _serialize(() async {
         await store.open();
         final now = nowUnix();
-        _traces.clear();
+        _clearTraces();
         for (final raw in await store.loadAll()) {
           // Every row is validated (SPEC §2). A store can hand back a row an
           // older version or a hand-edited database wrote; an unusable one is
@@ -140,7 +152,7 @@ class EngramMemory {
             lastRecall: math.min(raw.lastRecall, now),
             createdAt: math.min(raw.createdAt, now),
           );
-          _traces[m.id] = m;
+          _setTrace(m);
           if (m.stability != raw.stability ||
               m.lastRecall != raw.lastRecall ||
               m.createdAt != raw.createdAt) {
@@ -188,10 +200,58 @@ class EngramMemory {
 
   bool get _anyStale => _traces.values.any((m) => !_isIndexed(m));
 
+  /// Inserts or replaces [m] in [_traces] and keeps [_index] in step: an
+  /// indexed trace is (re)put unless the index already holds this very
+  /// vector — the common case, a strength update — and a trace that stopped
+  /// being indexed is removed.
+  void _setTrace(Memory m) {
+    final old = _traces[m.id];
+    _traces[m.id] = m;
+    final wasIndexed = old != null && _isIndexed(old);
+    if (_isIndexed(m)) {
+      if (!wasIndexed || !identical(old.vector, m.vector)) {
+        _index.put(m.id, m.vector);
+      }
+    } else if (wasIndexed) {
+      _index.remove(m.id);
+    }
+  }
+
+  /// Removes [id] from [_traces] and, if it was indexed, from [_index].
+  void _dropTrace(String id) {
+    final old = _traces.remove(id);
+    if (old != null && _isIndexed(old)) _index.remove(id);
+  }
+
+  void _clearTraces() {
+    _traces.clear();
+    _index.clear();
+  }
+
+  /// Scores every indexed trace against [queries] in one pass over the index.
+  /// Returns the traces in insertion order and the row-major scores
+  /// (`sims[i * queries.length + j]` = cos(trace i, query j)).
+  (List<Memory>, Float64List) _scan(List<Float32List> queries) {
+    final rows = _indexed.toList(growable: false);
+    if (rows.isEmpty || queries.isEmpty) return (rows, Float64List(0));
+    return (rows, _scores(rows, queries));
+  }
+
+  /// [VectorIndex.scores] for [rows], with its shape checked: a native index
+  /// that returned the wrong shape would otherwise corrupt every ranking.
+  Float64List _scores(List<Memory> rows, List<Float32List> queries) {
+    final out = _index.scores([for (final m in rows) m.id], queries);
+    if (out.length != rows.length * queries.length) {
+      throw StateError('VectorIndex.scores returned ${out.length} scores for '
+          '${rows.length} ids × ${queries.length} queries');
+    }
+    return out;
+  }
+
   /// Erases everything.
   Future<void> reset() => _serialize(() async {
         await store.clear();
-        _traces.clear();
+        _clearTraces();
         _writeTimes.clear();
         _lastRecall.clear();
       });
@@ -243,10 +303,10 @@ class EngramMemory {
         } catch (_) {
           v = null; // embedder offline: keep the text, index it later
         }
-        final q = v == null ? null : await _cueVector(cue, v);
-        final candidates = q == null ? const <Memory>[] : _candidates(q, null);
-        final best =
-            candidates.isEmpty ? 0.0 : dot(candidates.first.vector, q!);
+        final q = v == null ? null : (await _cueVectors([(cue, v)])).single;
+        final candidates =
+            q == null ? const <(double, Memory)>[] : _candidates(q, null);
+        final best = candidates.isEmpty ? 0.0 : candidates.first.$1;
         final m = Memory(
           id: ulid(now * 1000),
           text: text,
@@ -292,24 +352,34 @@ class EngramMemory {
           return RecallResult.empty; // embedder offline: nothing to cue with
         }
 
-        final scored = <Recalled>[];
+        // One pass over the index for every cue, into flat arrays; a Recalled
+        // is built only for the pool.
+        final (rows, sims) = _scan(qs);
+        final k = qs.length;
+        final cosines = Float64List(rows.length);
+        final rs = Float64List(rows.length);
+        final scores = Float64List(rows.length);
         var top = 0.0;
-        for (final m in _indexed) {
+        for (var i = 0; i < rows.length; i++) {
           var cos = double.negativeInfinity;
-          for (final q in qs) {
-            cos = math.max(cos, dot(m.vector, q));
+          for (var j = 0; j < k; j++) {
+            cos = math.max(cos, sims[i * k + j]);
           }
-          final r = retrievability(m, now);
+          final r = retrievability(rows[i], now);
           final score =
               _activation(cos) * (config.alpha + (1 - config.alpha) * r);
           top = math.max(top, score);
-          scored.add(Recalled(m, score: score, cosine: cos, retrievability: r));
+          cosines[i] = cos;
+          rs[i] = r;
+          scores[i] = score;
         }
         final floor = math.max(config.minScore, config.relativeScore * top);
         // Insertion order; MMR ties keep it.
         final pool = [
-          for (final c in scored)
-            if (c.score >= floor) c
+          for (var i = 0; i < rows.length; i++)
+            if (scores[i] >= floor)
+              Recalled(rows[i],
+                  score: scores[i], cosine: cosines[i], retrievability: rs[i]),
         ];
         final lines = <String>[];
         final packed = <Recalled>[];
@@ -375,10 +445,16 @@ class EngramMemory {
       if (bestI < 0) break;
       selected.add(pool[bestI]);
       alive[bestI] = false;
-      for (var i = 0; i < pool.length; i++) {
-        if (!alive[i]) continue;
-        maxSim[i] = math.max(
-            maxSim[i], dot(pool[i].memory.vector, pool[bestI].memory.vector));
+      if (selected.length == config.injectN) break;
+      final rest = [
+        for (var i = 0; i < pool.length; i++)
+          if (alive[i]) i,
+      ];
+      if (rest.isEmpty) break;
+      final sims = _scores(
+          [for (final i in rest) pool[i].memory], [pool[bestI].memory.vector]);
+      for (var r = 0; r < rest.length; r++) {
+        maxSim[rest[r]] = math.max(maxSim[rest[r]], sims[r]);
       }
     }
     return selected;
@@ -392,12 +468,12 @@ class EngramMemory {
       });
 
   Future<void> _put(Memory m) async {
-    _traces[m.id] = m;
+    _setTrace(m);
     await store.put(m);
   }
 
   Future<void> _remove(String id) async {
-    _traces.remove(id);
+    _dropTrace(id);
     await store.remove(id);
   }
 
@@ -447,10 +523,23 @@ class EngramMemory {
   /// Clusters may overlap: a settled trace is a candidate for every later
   /// piece of evidence. [budget] defaults to [EngramConfig.dreamBudget], as
   /// in [dream].
+  ///
+  /// Nothing changes while previewing, so every seed's cue is embedded in one
+  /// [Embedder.embedQueries] call and all of them are scored in one pass over
+  /// the index.
   Future<List<List<Memory>>> clusters({int? budget}) => _serialize(() async {
+        final seeds = _seeds(budget ?? config.dreamBudget);
+        if (seeds.isEmpty) return <List<Memory>>[];
+        final qs =
+            await _cueVectors([for (final s in seeds) (s.cue, s.vector)]);
+        final (rows, sims) = _scan(qs);
         final out = <List<Memory>>[];
-        for (final seed in _seeds(budget ?? config.dreamBudget)) {
-          final cluster = await _cluster(seed);
+        for (var j = 0; j < seeds.length; j++) {
+          final cluster = [
+            seeds[j],
+            for (final (_, i) in _near(rows, sims, qs.length, j, seeds[j]))
+              rows[i],
+          ];
           if (cluster.length >= 2) out.add(cluster);
         }
         return out;
@@ -464,38 +553,63 @@ class EngramMemory {
       .take(_seedsPerBudget * math.max(budget, 0))
       .toList(growable: false);
 
-  /// The cue's query vector; the trace's own vector when it has no cue.
-  Future<Float32List> _cueVector(String cue, Float32List own) async {
-    if (cue.isEmpty) return own;
-    try {
-      return _vector((await embedder.embedQueries([cue]))[0]) ?? own;
-    } catch (_) {
-      return own; // embedder offline: fall back to the text
+  /// Each (cue, own vector) pair's query vector: the cue's, or the trace's own
+  /// vector when it has no cue. The distinct non-empty cues are embedded in a
+  /// single [Embedder.embedQueries] call. When that call fails (embedder
+  /// offline) every pair falls back to its own vector; a missing or
+  /// wrong-dimension result falls back for its own pairs only.
+  Future<List<Float32List>> _cueVectors(
+      List<(String, Float32List)> pairs) async {
+    final slot = <String, int>{};
+    for (final (cue, _) in pairs) {
+      if (cue.isNotEmpty) slot.putIfAbsent(cue, () => slot.length);
     }
+    var embedded = const <Float32List?>[];
+    if (slot.isNotEmpty) {
+      try {
+        final raw = await embedder.embedQueries(slot.keys.toList());
+        embedded = [
+          for (var i = 0; i < slot.length; i++)
+            i < raw.length ? _vector(raw[i]) : null,
+        ];
+      } catch (_) {
+        // embedder offline: every cue falls back to its trace's own vector
+      }
+    }
+    return [
+      for (final (cue, own) in pairs)
+        switch (slot[cue]) {
+          final int s when s < embedded.length => embedded[s] ?? own,
+          _ => own,
+        },
+    ];
   }
 
-  /// Traces the cue [q] reactivates, strongest first: cos >= thetaRelated and
-  /// not written after the seed, so evidence only ever rewrites its own past
-  /// (SPEC §5). Ties break on insertion order — ULID tails are random, so ids
-  /// would not agree across languages. At most dreamMaxMembers - 1.
-  List<Memory> _candidates(Float32List q, Memory? seed) {
-    final rows = _indexed.toList(growable: false);
+  /// Traces the cue [q] reactivates (see [_near]), with their cosines.
+  List<(double, Memory)> _candidates(Float32List q, Memory? seed) {
+    final (rows, sims) = _scan([q]);
+    return [
+      for (final (cos, i) in _near(rows, sims, 1, 0, seed)) (cos, rows[i]),
+    ];
+  }
+
+  /// The traces query [column] of a [_scan] reactivates, strongest first, as
+  /// (cos, row): cos >= thetaRelated and not written after the seed, so
+  /// evidence only ever rewrites its own past (SPEC §5). Ties break on
+  /// insertion order — ULID tails are random, so ids would not agree across
+  /// languages. At most dreamMaxMembers - 1.
+  List<(double, int)> _near(List<Memory> rows, Float64List sims, int stride,
+      int column, Memory? seed) {
     final near = <(double, int)>[
       for (var i = 0; i < rows.length; i++)
         if (seed == null ||
             (rows[i].id != seed.id && rows[i].createdAt <= seed.createdAt))
-          for (final cos in [dot(rows[i].vector, q)])
+          for (final cos in [sims[i * stride + column]])
             if (cos >= config.thetaRelated) (cos, i),
     ]..sort(
         (a, b) => a.$1 == b.$1 ? a.$2.compareTo(b.$2) : b.$1.compareTo(a.$1));
-    return [
-      for (final e in near.take(config.dreamMaxMembers - 1)) rows[e.$2],
-    ];
+    return near.take(config.dreamMaxMembers - 1).toList(growable: false);
   }
-
-  /// The seed (newest evidence) followed by the older traces its cue reactivates.
-  Future<List<Memory>> _cluster(Memory seed) async =>
-      [seed, ..._candidates(await _cueVector(seed.cue, seed.vector), seed)];
 
   /// Offline consolidation — the only place traces are rewritten. Runs:
   /// backup → re-index stale traces → up to [budget] LLM adjudications via
@@ -513,13 +627,24 @@ class EngramMemory {
         await _reindex();
         var left = budget ?? config.dreamBudget;
         final reports = <DreamReport>[];
-        for (final s in _seeds(left)) {
-          final seed = _traces[s.id];
+        final seeds = _seeds(left);
+        // A seed's cue and vector never change during a dream (a seed is only
+        // settled or absorbed), so every cue is embedded up front in one call.
+        // The candidates are still searched per seed: each verdict rewrites
+        // the store the next seed searches.
+        final qs =
+            await _cueVectors([for (final s in seeds) (s.cue, s.vector)]);
+        for (var j = 0; j < seeds.length; j++) {
+          final seed = _traces[seeds[j].id];
           if (seed == null || seed.consolidated) {
             continue;
           }
           if (left <= 0) break;
-          final cluster = await _cluster(seed);
+          // The seed (newest evidence), then the older traces its cue reactivates.
+          final cluster = [
+            seed,
+            for (final (_, m) in _candidates(qs[j], seed)) m,
+          ];
           if (cluster.length < 2) {
             await _put(seed.copyWith(consolidated: true));
             continue;
@@ -594,10 +719,10 @@ class EngramMemory {
       }
     });
     for (final m in absorbed) {
-      _traces.remove(m.id);
+      _dropTrace(m.id);
     }
     for (final g in gists) {
-      _traces[g.id] = g;
+      _setTrace(g);
     }
     return DreamReport(
         action: DreamAction.replace, before: cluster, after: gists);
@@ -617,11 +742,12 @@ class EngramMemory {
         // Throwing leaves the seed labile, so the next dream retries it.
         _vector(v) ?? (throw StateError('embedder dimension mismatch')),
     ];
-    for (final v in vectors) {
+    final sims = _scores(cluster, vectors);
+    for (var j = 0; j < vectors.length; j++) {
       var best = double
           .negativeInfinity; // a true max, so gistMinCosine <= 0 still rejects
-      for (final m in cluster) {
-        best = math.max(best, dot(m.vector, v));
+      for (var i = 0; i < cluster.length; i++) {
+        best = math.max(best, sims[i * vectors.length + j]);
       }
       if (best < config.gistMinCosine) return const [];
     }

@@ -5,7 +5,6 @@ import 'package:long_term_memory/long_term_memory.dart';
 import 'package:long_term_memory/src/text.dart';
 import 'package:long_term_memory/src/timezone.dart';
 import 'package:long_term_memory/src/ulid.dart';
-import 'package:long_term_memory/src/vector_math.dart';
 import 'package:test/test.dart';
 
 void main() {

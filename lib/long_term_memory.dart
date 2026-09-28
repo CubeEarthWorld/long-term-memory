@@ -38,4 +38,5 @@ export 'src/models.dart'
 export 'src/store/in_memory_store.dart' show InMemoryStore;
 export 'src/store/memory_store.dart' show MemoryStore;
 export 'src/timezone.dart' show MemoryTimezone, formatLocal;
-export 'src/vector_math.dart' show l2Normalized, packF32, unpackF32;
+export 'src/vector_index.dart' show DartVectorIndex, VectorIndex;
+export 'src/vector_math.dart' show dot, l2Normalized, packF32, unpackF32;
